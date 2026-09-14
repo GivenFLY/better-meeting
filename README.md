@@ -18,7 +18,7 @@ The pipeline runs in cached stages — each writes into the video's working fold
 | # | Stage      | What happens                                                       |
 |---|------------|--------------------------------------------------------------------|
 | 1 | `audio`    | `ffmpeg` extracts a 16 kHz mono WAV                                 |
-| 2 | `transcribe` | Whisper (mlx on macOS / faster-whisper elsewhere) with timecodes — one pass per candidate language, merged |
+| 2 | `transcribe` | Whisper (mlx on macOS / faster-whisper elsewhere) with timecodes — one pass per candidate language, merged; or Parakeet, one pass for all languages (opt-in) |
 | 3 | `frames`   | sample thumbnails, keep only keyframes where the screen changed    |
 | 4 | `ocr`      | macOS Vision / tesseract reads each keyframe, diffs new on-screen text |
 | 5 | `bundle`   | assembles `artifacts/`: transcript, timeline, screenshots          |
@@ -34,6 +34,24 @@ When no language is pinned, it transcribes the whole recording **once per langua
 The cost is proportional: 3 languages = 3 transcription passes. Each pass is cached separately (`pass_uk.json`, …), so an interrupted run resumes without redoing finished passes. If you know the meeting's language, pin it — `--lang uk` — for a single pass. Adjust the candidate set with `--langs uk,en` etc.
 
 In multilingual recordings every transcript line carries its language tag (`[uk]`, `[en]`, `[ru]`), and the header of `timeline.md` reports the language share.
+
+### Parakeet: one pass instead of three (opt-in, macOS)
+
+`--asr-backend parakeet` swaps Whisper for NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) via [`parakeet-mlx`](https://github.com/senstella/parakeet-mlx): a single multilingual model (25 European languages, Ukrainian and Russian included) that decodes the whole recording **once**, with punctuation and sentence-level timestamps built in. It is several times faster than three Whisper passes and needs no `--langs`.
+
+```bash
+uv tool install "better-meeting[parakeet] @ git+https://github.com/GivenFLY/better-meeting.git"
+bm meeting.mp4 --asr-backend parakeet
+```
+
+What changes under Parakeet:
+
+- `--langs` has no effect (one pass). `-O` is rejected — it carries Whisper decoding options.
+- The model does not take a language: `--lang uk` only labels the segments. With `--lang auto` each segment is tagged by a script heuristic (Latin → `en`; Cyrillic → `uk`/`ru` by marker letters like `і`/`ї`/`є` vs `ы`/`э`/`ё` and language-specific function words), so the `[uk]`/`[ru]`/`[en]` tags and the language share in `timeline.md` stay. Short replies without markers inherit the previous segment's language.
+- Cache is one file, `pass_parakeet.json`, independent of `--lang`; switching between backends never invalidates the other's passes. `bm transcript --asr-backend parakeet` slices ranges from it like with Whisper.
+- Whisper's silence-hallucination filter does not apply; Parakeet does not produce those artifacts.
+
+Whisper stays the default. Parakeet is macOS-only for now (`parakeet-mlx` is an MLX package); on Linux/Windows `bm` exits with a clear message.
 
 ## One folder per video
 
@@ -98,7 +116,7 @@ bm meeting.mp4
 ### System dependencies
 
 - **ffmpeg / ffprobe** — required (audio extraction, frame sampling, duration).
-- **macOS** — Whisper via `mlx-whisper` and OCR via the built-in Vision framework work out of the box.
+- **macOS** — Whisper via `mlx-whisper` and OCR via the built-in Vision framework work out of the box. For the optional Parakeet engine add the extra: `pip install -e ".[parakeet]"`.
 - **Linux / Windows** — install the faster-whisper backend and tesseract:
   ```bash
   pip install -e ".[faster]"   # faster-whisper ASR backend
@@ -129,11 +147,12 @@ Common `extract` options:
 | `--only STAGE`         | —              | stop after `audio`/`transcribe`/`frames`/`ocr`/`bundle` |
 | `--lang uk\|en\|ru\|auto` | `auto`      | pin one language (single pass) or `auto` (pass per `--langs`, best merge) |
 | `--langs L1,L2,...`    | `uk,ru,en`     | candidate languages tried when `--lang auto`        |
-| `--asr-model NAME`     | `large-v3-turbo` | Whisper model                                     |
+| `--asr-backend auto\|mlx\|faster\|parakeet` | `auto` | `auto` = Whisper (mlx on macOS, faster elsewhere); `parakeet` = one pass for all languages, macOS |
+| `--asr-model NAME`     | `large-v3-turbo` | Whisper model, or a HF repo id under `--asr-backend parakeet` |
 | `--frame-interval SEC` | `2.0`          | thumbnail sampling interval                          |
 | `--max-shots N`        | `30`           | how many screenshots to keep in `artifacts/`        |
 | `--ocr vision\|tesseract\|none` | `vision` on macOS | OCR backend                            |
-| `-O KEY=VALUE`         | —              | any Whisper option for transcription, repeatable (e.g. `-O initial_prompt="project terms"`) |
+| `-O KEY=VALUE`         | —              | any Whisper option for transcription, repeatable (e.g. `-O initial_prompt="project terms"`); Whisper only |
 
 Run `bm --help` (or `bm extract --help`) for the full list.
 

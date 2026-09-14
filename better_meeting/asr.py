@@ -1,22 +1,36 @@
-"""Етап 2: транскрипція з таймкодами (mlx-whisper або faster-whisper).
+"""Етап 2: транскрипція з таймкодами.
 
+Бекенди: mlx (mlx-whisper, macOS), faster (faster-whisper), parakeet
+(parakeet-mlx, macOS; NVIDIA Parakeet TDT — один прогін на всі мови).
+
+Whisper:
 --lang uk        -> один прогін цією мовою.
 --lang auto      -> повний прогін КОЖНОЮ з мов --langs (дефолт uk,ru,en),
                     потім злиття: таймлайн покривається сегментами тієї мови,
                     якій whisper дав кращу впевненість (avg_logprob) на цій
                     ділянці. Працює для будь-якого чергування мов у записі —
                     аж до перемикання мови між сусідніми репліками.
-
 Кожен прогін кешується окремо (pass_<lang>.json у робочій теці) — падіння на
-другій мові не змушує переганяти першу. Кожен сегмент має поле "lang".
+другій мові не змушує переганяти першу.
+
+Parakeet:
+один прогін незалежно від --lang/--langs (модель багатомовна, мову не приймає),
+кеш pass_parakeet.json. Мова сегмента — з --lang, якщо закріплена, інакше
+евристика по алфавіту (uk/ru/en). -O не підтримується.
+
+Кожен сегмент має поле "lang".
 """
 
 import hashlib
 import json
 import platform
+import re
 from pathlib import Path
 
-from .utils import load, log, save
+from .utils import die, load, log, save
+
+WHISPER_MODEL = "large-v3-turbo"                      # дефолт --asr-model
+PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"  # дефолт для --asr-backend parakeet
 
 
 def transcribe(wav: Path, lang: str, langs: list, model: str, backend: str,
@@ -26,13 +40,15 @@ def transcribe(wav: Path, lang: str, langs: list, model: str, backend: str,
     opts = opts or {}
     if backend == "auto":
         backend = "mlx" if platform.system() == "Darwin" else "faster"
+    if backend == "parakeet":
+        return [_public(s) for s in _transcribe_parakeet(wav, lang, langs, model, work, opts)]
 
     if lang != "auto":
         return [_public(s) for s in _run(wav, lang, model, backend, opts)]
 
     passes = []
     for l in langs:
-        cache = work / f"pass_{l}.json"
+        cache = _pass_path(work, backend, l)
         cached = load(cache) if cache.exists() else None
         if isinstance(cached, dict) and cached.get("model") == model \
                 and cached.get("backend") == backend and cached.get("opts", {}) == opts:
@@ -54,6 +70,40 @@ def transcribe(wav: Path, lang: str, langs: list, model: str, backend: str,
     return [_public(s) for s in merged]
 
 
+def _transcribe_parakeet(wav: Path, lang: str, langs: list, model: str,
+                         work: Path, opts: dict) -> list:
+    """Один прогін на весь запис. Кеш не залежить від --lang: закріплена мова
+    лише підписує сегменти, auto — евристика по алфавіту."""
+    _reject_whisper_opts(opts)
+    if lang == "auto" and langs:
+        log("parakeet: один прогін на всі мови, --langs не впливає")
+    cache = _pass_path(work, "parakeet", None)
+    cached = load(cache) if cache.exists() else None
+    if isinstance(cached, dict) and cached.get("model") == model \
+            and cached.get("backend") == "parakeet" and cached.get("opts", {}) == opts:
+        segs = cached["segments"]
+        log(f"прогін [parakeet]: з кешу, {len(segs)} сегментів")
+    else:
+        log("прогін [parakeet]")
+        segs = _run_parakeet(wav, None, model, opts)
+        save(cache, {"model": model, "backend": "parakeet", "opts": opts,
+                     "segments": segs})
+    if lang != "auto":
+        segs = [{**s, "lang": lang} for s in segs]
+    shares = {}
+    for s in segs:
+        shares[s["lang"]] = shares.get(s["lang"], 0) + 1
+    log("мови: " + ", ".join(f"{l}: {n}" for l, n in
+                              sorted(shares.items(), key=lambda kv: -kv[1])))
+    return segs
+
+
+def _pass_path(work: Path, backend: str, lang) -> Path:
+    """Файл кешу повного прогону: pass_<lang>.json для whisper, один
+    pass_parakeet.json для parakeet (мова на прогін не впливає)."""
+    return work / ("pass_parakeet.json" if backend == "parakeet" else f"pass_{lang}.json")
+
+
 def _public(s: dict) -> dict:
     return {"start": s["start"], "end": s["end"], "text": s["text"], "lang": s["lang"]}
 
@@ -67,6 +117,8 @@ def transcribe_range(video: Path, start: float, end, lang, model: str, backend: 
     force перераховує."""
     if backend == "auto":
         backend = "mlx" if platform.system() == "Darwin" else "faster"
+    if backend == "parakeet":
+        _reject_whisper_opts(opts)     # до витягування аудіо, щоб не лишати кліп
     key = {"from": round(start, 3), "to": round(end, 3) if end is not None else None,
            "lang": lang, "model": model, "backend": backend, "opts": opts}
     digest = hashlib.sha1(
@@ -115,11 +167,15 @@ def _slice_pipeline_cache(work: Path, start: float, end, lang, model: str,
             and data.get("backend") == backend and data.get("opts", {}) == opts
 
     if lang is not None:
-        f = work / f"pass_{lang}.json"
+        f = _pass_path(work, backend, lang)
         if f.exists():
             data = load(f)
             if match(data):
-                return [_public(s) for s in data["segments"] if in_range(s)]
+                segs = [_public(s) for s in data["segments"] if in_range(s)]
+                if backend == "parakeet":       # у кеші — евристичні мови, --lang їх перекриває
+                    for s in segs:
+                        s["lang"] = lang
+                return segs
         return None
 
     f_transcript = work / "transcript.json"
@@ -160,6 +216,8 @@ def _merge(passes: list) -> list:
 def _run(wav: Path, lang, model: str, backend: str, opts: dict | None = None) -> list:
     if backend == "mlx":
         return _run_mlx(wav, lang, model, opts or {})
+    if backend == "parakeet":
+        return _run_parakeet(wav, lang, model, opts or {})
     return _run_faster(wav, lang, model, opts or {})
 
 
@@ -167,7 +225,6 @@ def _run_mlx(wav: Path, lang, model: str, opts: dict) -> list:
     try:
         import mlx_whisper  # type: ignore
     except ImportError:
-        from .utils import die
         die("немає mlx-whisper. `pip install mlx-whisper` або --asr-backend faster")
     repo = model if "/" in model else f"mlx-community/whisper-{model}"
     kwargs = {"language": lang, "condition_on_previous_text": False, **opts}
@@ -189,7 +246,6 @@ def _run_faster(wav: Path, lang, model: str, opts: dict) -> list:
     try:
         from faster_whisper import WhisperModel  # type: ignore
     except ImportError:
-        from .utils import die
         die("немає faster-whisper. `pip install faster-whisper`")
     if model not in _FASTER_CACHE:
         _FASTER_CACHE[model] = WhisperModel(model, device="auto", compute_type="int8")
@@ -203,3 +259,79 @@ def _run_faster(wav: Path, lang, model: str, opts: dict) -> list:
          "score": float(s.avg_logprob), "nospeech": float(s.no_speech_prob)}
         for s in segs if s.text.strip()
     ]
+
+
+_PARAKEET_CACHE = {}
+
+
+def _run_parakeet(wav: Path, lang, model: str, opts: dict) -> list:
+    """Один прогін parakeet-mlx. lang закріплює мову сегментів; None — евристика.
+    Довге аудіо ріжеться на 2-хвилинні шматки з перекриттям (як у CLI parakeet-mlx)."""
+    _reject_whisper_opts(opts)
+    if platform.system() != "Darwin":
+        die("parakeet поки що лише на macOS (parakeet-mlx); тут — --asr-backend faster")
+    try:
+        from parakeet_mlx import from_pretrained  # type: ignore
+    except ImportError:
+        die("немає parakeet-mlx. `pip install \"better-meeting[parakeet]\"`")
+    repo = _parakeet_repo(model)
+    if repo not in _PARAKEET_CACHE:
+        _PARAKEET_CACHE[repo] = from_pretrained(repo)
+    res = _PARAKEET_CACHE[repo].transcribe(
+        str(wav), chunk_duration=120.0, overlap_duration=15.0)
+    segs = [
+        {"start": float(s.start), "end": float(s.end), "text": s.text.strip(),
+         "lang": lang, "score": float(s.confidence), "nospeech": 0.0}
+        for s in res.sentences if s.text.strip()
+    ]
+    if lang is None:
+        prev = None
+        for s in segs:
+            s["lang"] = prev = _guess_lang(s["text"], prev)
+    return segs
+
+
+def _reject_whisper_opts(opts: dict) -> None:
+    if opts:
+        die("-O стосується лише whisper; parakeet не має параметрів декодування")
+
+
+def _parakeet_repo(model: str) -> str:
+    """--asr-model під parakeet: HF repo id; дефолтна whisper-модель -> дефолт parakeet."""
+    if "/" in model:
+        return model
+    if model == WHISPER_MODEL:
+        return PARAKEET_MODEL
+    die(f"--asr-model {model!r} не схоже на parakeet-модель; "
+        f"вкажіть HF repo id, напр. {PARAKEET_MODEL}")
+
+
+_UK_LETTERS = set("іїєґ")
+_RU_LETTERS = set("ыэъё")
+# службові слова, що існують лише в одній з мов (без спільних «не», «на», «так»)
+_UK_WORDS = {"і", "й", "що", "це", "як", "був", "була", "було", "ще", "вже", "або",
+             "коли", "де", "хто", "вони", "ми", "ви", "він", "вона", "воно", "з", "із",
+             "зі", "від", "під", "але", "цей", "ця", "його", "її", "їх", "дуже", "зараз",
+             "потім", "треба", "потрібно", "добре", "дякую", "ласка", "гаразд", "згоден",
+             "питання", "вчора"}
+_RU_WORDS = {"и", "что", "это", "как", "был", "была", "было", "есть", "нет", "ещё",
+             "еще", "уже", "только", "если", "чтобы", "или", "когда", "где", "кто",
+             "они", "мы", "вы", "он", "она", "оно", "из", "с", "к", "от", "под", "его",
+             "её", "ее", "их", "очень", "сейчас", "потом", "надо", "нужно", "хорошо",
+             "спасибо", "пожалуйста", "привет", "ладно", "согласен", "понятно", "вопрос",
+             "сегодня", "вчера", "неделя", "встреча"}
+
+
+def _guess_lang(text: str, prev):
+    """Мова за письмом: латиниця -> en; кирилиця — за літерами-маркерами
+    (і/ї/є/ґ проти ы/э/ъ/ё) і службовими словами однієї з мов; без маркерів
+    (коротка репліка) -> мова попереднього сегмента, інакше uk."""
+    low = text.lower()
+    if not any("\u0400" <= c <= "\u04ff" for c in low):
+        return "en" if any(c.isalpha() for c in low) else prev
+    words = re.findall(r"[\u0400-\u04ff']+", low)
+    uk = sum(c in _UK_LETTERS for c in low) + sum(w in _UK_WORDS for w in words)
+    ru = sum(c in _RU_LETTERS for c in low) + sum(w in _RU_WORDS for w in words)
+    if uk != ru:
+        return "uk" if uk > ru else "ru"
+    return prev if prev in ("uk", "ru") else "uk"

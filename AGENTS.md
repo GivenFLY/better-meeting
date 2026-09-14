@@ -11,7 +11,7 @@ Requires Python 3.12+ and `ffmpeg`/`ffprobe` on PATH.
 ```bash
 uv tool install git+https://github.com/GivenFLY/better-meeting.git   # global `bm` command
 # in a clone: uv sync && uv run bm --help
-# macOS: mlx-whisper + Vision OCR out of the box
+# macOS: mlx-whisper + Vision OCR out of the box; add the [parakeet] extra for the optional Parakeet engine
 # Linux/Windows: install the [faster] extra + tesseract-ocr, run with --ocr tesseract
 ```
 
@@ -51,6 +51,7 @@ Meetings may be Ukrainian, Russian, English — or mixed within one recording.
 - Known language: `--lang uk` → single pass, 3× faster.
 - Narrow the candidates: `--langs uk,en`.
 - Multilingual transcripts tag every line with `[uk]`/`[ru]`/`[en]`.
+- Alternative engine (macOS, needs the `[parakeet]` extra): `--asr-backend parakeet` → NVIDIA Parakeet TDT v3, **one pass for all 25 supported languages** (uk/ru/en included), several times faster than three Whisper passes, punctuation built in. `--langs` is ignored, `-O` is rejected, `--lang` only labels segments; with `--lang auto` the `[uk]`/`[ru]`/`[en]` tags come from a script heuristic, not from the model — treat them as a hint, not ground truth. Works for `bm transcript` too.
 
 ## Point queries (drill into a moment)
 
@@ -77,7 +78,7 @@ bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
 - **OCR confuses `l/1/I` and `0/O`**: before relying on an exact command/identifier from `timeline.md`, verify against the screenshot (`bm frame` + look, or `bm ocr --backend tesseract` to cross-check).
 - Silence markers `[тиша Nс]` in the timeline are neutral — do not assume what happened during them.
 - A video with no audio track fails at the `audio` stage with a clear `[bm] ПОМИЛКА:` message — that is expected, not a bug to fix.
-- Whisper models download from HuggingFace on first use (large-v3-turbo ≈ 1.6 GB) — the first run needs network and time.
+- ASR models download from HuggingFace on first use (Whisper large-v3-turbo ≈ 1.6 GB, Parakeet TDT v3 ≈ 2.5 GB) — the first run needs network and time.
 
 ## Working on the codebase
 

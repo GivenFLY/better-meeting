@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 # Non-macOS ASR backend. Enable with: pip install "better-meeting[faster]"
 faster = ["faster-whisper>=1.0.0"]
+parakeet = [
+    "parakeet-mlx>=0.5.2 ; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 bm = "better_meeting.cli:main"

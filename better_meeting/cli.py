@@ -21,6 +21,7 @@ import platform
 import sys
 from pathlib import Path
 
+from .asr import WHISPER_MODEL
 from .pipeline import run_pipeline
 from .utils import die, parse_ts, ts, ts_file
 
@@ -53,8 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "auto = повний прогін кожною з --langs зі злиттям найкращого")
     px.add_argument("--langs", default="uk,ru,en",
                     help="які мови проганяти при --lang auto (через кому)")
-    px.add_argument("--asr-backend", default="auto", choices=["auto", "mlx", "faster"])
-    px.add_argument("--asr-model", default="large-v3-turbo")
+    px.add_argument("--asr-backend", default="auto",
+                    choices=["auto", "mlx", "faster", "parakeet"],
+                    help="auto = whisper (mlx на macOS / faster деінде); "
+                         "parakeet = NVIDIA Parakeet TDT, один прогін на всі мови (macOS)")
+    px.add_argument("--asr-model", default=WHISPER_MODEL,
+                    help="whisper-модель або HF repo id parakeet-моделі")
 
     px.add_argument("--frame-interval", type=float, default=2.0)
     px.add_argument("--cell-delta", type=int, default=14, help="поріг зміни зони кадру")
@@ -99,8 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="таймкод кінця (деф. кінець відео)")
     pt.add_argument("--lang", default=None,
                     help="мова (uk/ru/en/...); без неї — автодетекція whisper по кліпу")
-    pt.add_argument("--asr-model", default="large-v3-turbo")
-    pt.add_argument("--asr-backend", default="auto", choices=["auto", "mlx", "faster"])
+    pt.add_argument("--asr-model", default=WHISPER_MODEL,
+                    help="whisper-модель або HF repo id parakeet-моделі")
+    pt.add_argument("--asr-backend", default="auto",
+                    choices=["auto", "mlx", "faster", "parakeet"],
+                    help="auto = whisper (mlx на macOS / faster деінде); parakeet = один прогін (macOS)")
     pt.add_argument("-O", "--opt", action="append", default=[], metavar="KEY=VALUE",
                     help="будь-який параметр whisper, можна кілька разів: "
                          "-O temperature=0.2 -O initial_prompt='терміни проєкту' "
