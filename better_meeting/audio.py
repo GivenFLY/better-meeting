@@ -1,19 +1,22 @@
-"""Етап 1: витягування аудіодоріжки під ASR."""
+"""Stage 1: extract the audio track as 16 kHz mono WAV for ASR."""
+
+from __future__ import annotations
 
 from pathlib import Path
 
 from .utils import log, need, run
 
 
-def extract_audio(video: Path, wav: Path,
-                  start: float | None = None, duration: float | None = None) -> None:
+def extract_audio(
+    video: Path, wav: Path, start: float | None = None, duration: float | None = None
+) -> None:
+    """Write ``wav`` from ``video``, optionally only ``[start, start + duration)``."""
     need("ffmpeg")
-    log("витягую аудіо")
+    log("extracting audio")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     if start:
         cmd += ["-ss", f"{start:.3f}"]
     if duration is not None:
         cmd += ["-t", f"{duration:.3f}"]
-    cmd += ["-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
-            "-c:a", "pcm_s16le", str(wav)]
+    cmd += ["-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)]
     run(cmd)
