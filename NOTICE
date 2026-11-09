@@ -1,8 +1,9 @@
 better-meeting
 Copyright 2026 Oleksii Moshura (GivenFLY)
 
-This is a personal project of the author, developed on personal time and
-equipment. Licensed under the Apache License, Version 2.0.
+This is a personal project of the author, developed on personal equipment and
+accounts, independently of any employer. Licensed under the Apache License,
+Version 2.0.
 
 Optional ASR engine: NVIDIA Parakeet TDT 0.6B v3 model weights
 (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), © NVIDIA Corporation,

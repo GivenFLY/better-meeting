@@ -1,0 +1,23 @@
+name: Feature request
+description: A new capability, provider, or option
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do with your recordings that bm does not support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How it could work. For a new ASR/OCR provider, name the service or model and how it authenticates.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This keeps bm an extractor (no summarizing or interpreting inside the tool).
+          required: true

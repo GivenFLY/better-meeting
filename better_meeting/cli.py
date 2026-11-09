@@ -1,146 +1,242 @@
-"""CLI: розбір аргументів і запуск.
+"""Command-line interface: ``bm``.
 
-Підкоманди:
-  agents      надрукувати AGENTS.md — інструкцію для LLM-агента, що керує bm
-  extract     повний пайплайн: відео -> runs/<ім'я>/artifacts/  (дефолт: `bm video.mp4`)
-  frame       точковий запит: один кадр на заданому таймкоді
-  ocr         точковий запит: OCR кадру відео на таймкоді або готового зображення
-  transcript  точковий запит: транскрипт проміжку --from..--to заданою мовою,
-              з прокиданням будь-яких whisper-параметрів (-O key=value);
-              кешується за параметрами — повторний запит миттєвий (--force перерахує)
+Subcommands:
+  extract     full pipeline: video -> runs/<name>/artifacts/ (``bm video.mp4`` is the same)
+  frame       point query: one frame at a timecode
+  ocr         point query: OCR a video frame at a timecode, or an existing image
+  transcript  point query: transcript of a ``--from``..``--to`` range, with any
+              Whisper option passed through (``-O key=value``); cached by parameters
+  agents      print AGENTS.md, the guide for an LLM agent driving ``bm``
 
-Точкові запити — інструментарій для зовнішньої моделі: побачила в timeline.md
-цікавий момент — дістала кадр, перечитала текст чи перегнала шматок транскрипту
-іншими параметрами, не переганяючи весь пайплайн.
-Дані друкуються в stdout, лог — у stderr.
+Point queries print data to stdout and logs to stderr, so an agent can capture
+the result directly.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
-import platform
+import logging
 import sys
 from pathlib import Path
+from typing import Any
 
-from .asr import WHISPER_MODEL
-from .pipeline import run_pipeline
-from .utils import die, parse_ts, ts, ts_file
+from . import __version__
+from .asr import backend_names as asr_backend_names
+from .ocr import backend_names as ocr_backend_names
+from .ocr import default_backend_name as default_ocr_backend
+from .utils import BmError, parse_ts, setup_logging, ts, ts_file
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"}
 COMMANDS = {"extract", "frame", "ocr", "transcript", "agents"}
+STAGES = ["audio", "transcribe", "frames", "ocr", "bundle"]
+DEFAULT_OCR_LANGS = "en-US,uk-UA"
+ASR_MODEL_HELP = (
+    "ASR model; default depends on the backend (Whisper: large-v3-turbo, "
+    "Parakeet: mlx-community/parakeet-tdt-0.6b-v3). Parakeet takes a "
+    "Hugging Face repo id"
+)
+OPT_HELP = (
+    "any Whisper decoding option, repeatable, values parse as JSON "
+    "(e.g. -O initial_prompt='project terms' -O temperature=0.2)"
+)
 
 
-def _default_ocr_backend() -> str:
-    return "vision" if platform.system() == "Darwin" else "tesseract"
+def _add_asr_args(p: Any) -> None:
+    """ASR options shared by `extract` and `transcript` (parser or argument group)."""
+    p.add_argument(
+        "--asr-backend",
+        default="auto",
+        choices=["auto", *asr_backend_names()],
+        help="auto = Whisper (mlx on macOS, faster-whisper elsewhere); "
+        "parakeet = one pass for all languages (macOS)",
+    )
+    p.add_argument("--asr-model", default=None, help=ASR_MODEL_HELP)
+    p.add_argument("-O", "--opt", action="append", default=[], metavar="KEY=VALUE", help=OPT_HELP)
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="bm",
-        description="better-meeting: витягує всі дані з запису зустрічі для зовнішньої моделі")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+        description="better-meeting: extract transcript, on-screen text and key "
+        "screenshots from a meeting recording, as context for an LLM.",
+    )
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    verbosity = ap.add_mutually_exclusive_group()
+    verbosity.add_argument("-q", "--quiet", action="store_true", help="only print errors")
+    verbosity.add_argument("-v", "--verbose", action="store_true", help="print debug logs")
+    sub = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
-    px = sub.add_parser("extract", help="повний пайплайн: відео -> artifacts/")
+    # extract
+    px = sub.add_parser("extract", help="full pipeline: video -> artifacts/")
     px.add_argument("video", type=Path)
-    px.add_argument("--out", type=Path, default=None,
-                    help="точна робоча тека (за замовч. <out-root>/<ім'я відео>)")
-    px.add_argument("--out-root", type=Path, default=Path("runs"),
-                    help="корінь, у якому для кожного відео створюється своя тека")
-    px.add_argument("--force", action="store_true", help="перезробити всі етапи")
-    px.add_argument("--only", choices=["audio", "transcribe", "frames", "ocr", "bundle"],
-                    help="зупинитись після етапу")
+    g = px.add_argument_group("output")
+    g.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="exact working folder (default: <out-root>/<video name>)",
+    )
+    g.add_argument(
+        "--out-root",
+        type=Path,
+        default=Path("runs"),
+        help="root that holds one working folder per video (default: runs)",
+    )
+    g.add_argument("--force", action="store_true", help="redo every stage, ignore the cache")
+    g.add_argument("--only", choices=STAGES, help="stop after this stage")
 
-    px.add_argument("--lang", default="auto",
-                    help="конкретна мова (uk/ru/en/...) = один прогін нею; "
-                         "auto = повний прогін кожною з --langs зі злиттям найкращого")
-    px.add_argument("--langs", default="uk,ru,en",
-                    help="які мови проганяти при --lang auto (через кому)")
-    px.add_argument("--asr-backend", default="auto",
-                    choices=["auto", "mlx", "faster", "parakeet"],
-                    help="auto = whisper (mlx на macOS / faster деінде); "
-                         "parakeet = NVIDIA Parakeet TDT, один прогін на всі мови (macOS)")
-    px.add_argument("--asr-model", default=WHISPER_MODEL,
-                    help="whisper-модель або HF repo id parakeet-моделі")
+    g = px.add_argument_group("transcription")
+    g.add_argument(
+        "--lang",
+        default="auto",
+        help="pin one language (uk/ru/en/...) for a single pass; auto = one "
+        "pass per --langs entry, best segments merged (default: auto)",
+    )
+    g.add_argument(
+        "--langs",
+        default="uk,ru,en",
+        help="candidate languages for --lang auto, comma-separated (default: uk,ru,en)",
+    )
+    _add_asr_args(g)
+    g.add_argument(
+        "--pause",
+        type=float,
+        default=8.0,
+        help="silences at least this long (s) are marked in the timeline (default: 8)",
+    )
 
-    px.add_argument("--frame-interval", type=float, default=2.0)
-    px.add_argument("--cell-delta", type=int, default=14, help="поріг зміни зони кадру")
-    px.add_argument("--min-cells", type=int, default=3, help="скільки зон має змінитись")
-    px.add_argument("--max-gap", type=float, default=90.0, help="примусовий кадр раз на N сек")
-    px.add_argument("--frame-width", type=int, default=1920)
+    g = px.add_argument_group("frames")
+    g.add_argument(
+        "--frame-interval",
+        type=float,
+        default=2.0,
+        help="thumbnail sampling interval, seconds (default: 2)",
+    )
+    g.add_argument(
+        "--cell-delta",
+        type=int,
+        default=14,
+        help="grayscale change (0-255) that marks a grid cell as changed (default: 14)",
+    )
+    g.add_argument(
+        "--min-cells",
+        type=int,
+        default=3,
+        help="changed cells (of 16x16) needed to keep a frame (default: 3)",
+    )
+    g.add_argument(
+        "--max-gap",
+        type=float,
+        default=90.0,
+        help="keep a frame at least every N seconds (default: 90)",
+    )
+    g.add_argument(
+        "--frame-width",
+        type=int,
+        default=1920,
+        help="width of extracted full frames, px (default: 1920)",
+    )
 
-    px.add_argument("--ocr", default=_default_ocr_backend(),
-                    choices=["vision", "tesseract", "none"])
-    px.add_argument("--ocr-lang", default="en-US,uk-UA")
-    px.add_argument("--ocr-sim", type=float, default=0.97, help="поріг «той самий екран»")
+    g = px.add_argument_group("OCR")
+    g.add_argument(
+        "--ocr",
+        default=default_ocr_backend(),
+        choices=[*ocr_backend_names(), "none"],
+        help="OCR backend (default: vision on macOS, tesseract elsewhere)",
+    )
+    g.add_argument(
+        "--ocr-lang",
+        default=DEFAULT_OCR_LANGS,
+        help=f"OCR languages as BCP 47 tags (default: {DEFAULT_OCR_LANGS})",
+    )
+    g.add_argument(
+        "--ocr-sim",
+        type=float,
+        default=0.97,
+        help="text similarity above which two frames count as the same screen (default: 0.97)",
+    )
 
-    px.add_argument("-O", "--opt", action="append", default=[], metavar="KEY=VALUE",
-                    help="будь-який параметр whisper для транскрипції, можна кілька: "
-                         "-O initial_prompt='терміни проєкту' -O temperature=0.2")
+    g = px.add_argument_group("screenshots")
+    g.add_argument(
+        "--max-shots", type=int, default=30, help="screenshots to keep in artifacts/ (default: 30)"
+    )
+    g.add_argument(
+        "--shot-width", type=int, default=1400, help="screenshot width, px (default: 1400)"
+    )
+    g.add_argument(
+        "--shot-quality", type=int, default=72, help="screenshot JPEG quality (default: 72)"
+    )
+    g.add_argument(
+        "--no-label", action="store_true", help="do not stamp the timecode on screenshots"
+    )
 
-    px.add_argument("--pause", type=float, default=8.0,
-                    help="від скількох секунд тиша йде в таймлайн")
+    # agents
+    sub.add_parser("agents", help="print the guide for LLM agents (AGENTS.md)")
 
-    px.add_argument("--max-shots", type=int, default=30,
-                    help="скільки скріншотів класти в artifacts")
-    px.add_argument("--shot-width", type=int, default=1400)
-    px.add_argument("--shot-quality", type=int, default=72)
-    px.add_argument("--no-label", action="store_true", help="не випалювати таймкод на кадрі")
-
-    sub.add_parser("agents", help="надрукувати інструкцію для LLM-агента (AGENTS.md)")
-
-    pf = sub.add_parser("frame", help="один кадр відео на заданому таймкоді")
+    # frame
+    pf = sub.add_parser("frame", help="extract one frame at a timecode, print its path")
     pf.add_argument("video", type=Path)
-    pf.add_argument("-t", "--at", required=True, help="таймкод: SS / MM:SS / HH:MM:SS")
-    pf.add_argument("-o", "--out", type=Path, default=None,
-                    help="файл кадру (за замовч. <out-root>/<ім'я відео>/frames_at/<таймкод>.jpg)")
+    pf.add_argument("-t", "--at", required=True, help="timecode: SS, MM:SS or HH:MM:SS")
+    pf.add_argument(
+        "-o",
+        "--out",
+        type=Path,
+        default=None,
+        help="output file (default: <out-root>/<video name>/frames_at/<time>.jpg)",
+    )
     pf.add_argument("--out-root", type=Path, default=Path("runs"))
-    pf.add_argument("--width", type=int, default=1920)
+    pf.add_argument("--width", type=int, default=1920, help="frame width, px")
 
-    pt = sub.add_parser("transcript",
-                        help="транскрипт проміжку відео (кешується за параметрами)")
+    # transcript
+    pt = sub.add_parser("transcript", help="transcript of a time range (cached by parameters)")
     pt.add_argument("video", type=Path)
-    pt.add_argument("--from", dest="frm", default=None,
-                    help="таймкод початку: SS / MM:SS / HH:MM:SS (деф. початок)")
-    pt.add_argument("--to", dest="to", default=None,
-                    help="таймкод кінця (деф. кінець відео)")
-    pt.add_argument("--lang", default=None,
-                    help="мова (uk/ru/en/...); без неї — автодетекція whisper по кліпу")
-    pt.add_argument("--asr-model", default=WHISPER_MODEL,
-                    help="whisper-модель або HF repo id parakeet-моделі")
-    pt.add_argument("--asr-backend", default="auto",
-                    choices=["auto", "mlx", "faster", "parakeet"],
-                    help="auto = whisper (mlx на macOS / faster деінде); parakeet = один прогін (macOS)")
-    pt.add_argument("-O", "--opt", action="append", default=[], metavar="KEY=VALUE",
-                    help="будь-який параметр whisper, можна кілька разів: "
-                         "-O temperature=0.2 -O initial_prompt='терміни проєкту' "
-                         "(значення парситься як JSON, інакше рядок)")
-    pt.add_argument("--json", action="store_true",
-                    help="сирі сегменти JSON замість рядків з таймкодами")
+    pt.add_argument(
+        "--from",
+        dest="frm",
+        default=None,
+        help="range start: SS, MM:SS or HH:MM:SS (default: beginning)",
+    )
+    pt.add_argument("--to", default=None, help="range end (default: end of video)")
+    pt.add_argument(
+        "--lang",
+        default=None,
+        help="language (uk/ru/en/...); omitted = detected by the ASR backend",
+    )
+    _add_asr_args(pt)
+    pt.add_argument(
+        "--json", action="store_true", help="print raw JSON segments instead of timecoded lines"
+    )
     pt.add_argument("--out-root", type=Path, default=Path("runs"))
-    pt.add_argument("--force", action="store_true", help="ігнорувати кеш, перерахувати")
+    pt.add_argument("--force", action="store_true", help="ignore the cache and recompute")
 
-    po = sub.add_parser("ocr", help="OCR: кадр відео на таймкоді або готове зображення")
-    po.add_argument("target", type=Path, help="відео (потрібен --at) або зображення")
-    po.add_argument("-t", "--at", default=None, help="таймкод: SS / MM:SS / HH:MM:SS")
-    po.add_argument("--backend", default=_default_ocr_backend(),
-                    choices=["vision", "tesseract"])
-    po.add_argument("--lang", default="en-US,uk-UA")
+    # ocr
+    po = sub.add_parser("ocr", help="OCR a video frame at a timecode, or an existing image")
+    po.add_argument("target", type=Path, help="video (needs --at) or image")
+    po.add_argument("-t", "--at", default=None, help="timecode: SS, MM:SS or HH:MM:SS")
+    po.add_argument("--backend", default=default_ocr_backend(), choices=ocr_backend_names())
+    po.add_argument(
+        "--lang",
+        default=DEFAULT_OCR_LANGS,
+        help=f"OCR languages as BCP 47 tags (default: {DEFAULT_OCR_LANGS})",
+    )
     po.add_argument("--out-root", type=Path, default=Path("runs"))
-    po.add_argument("--width", type=int, default=1920)
+    po.add_argument("--width", type=int, default=1920, help="frame width, px")
     return ap
 
 
-def resolve_out(args) -> Path:
-    """Кожне відео -> власна тека. --out має пріоритет, інакше <out-root>/<stem>."""
+def resolve_out(args: argparse.Namespace) -> Path:
+    """Every video gets its own folder: ``--out`` if given, else ``<out-root>/<stem>``."""
     return args.out if args.out is not None else args.out_root / args.video.stem
 
 
-def parse_opts(pairs: list) -> dict:
-    """-O key=value (повторюваний) -> dict; значення парсяться як JSON, інакше рядок."""
-    opts = {}
+def parse_opts(pairs: list[str]) -> dict[str, Any]:
+    """Repeated ``KEY=VALUE`` -> dict; values parse as JSON, falling back to a string."""
+    opts: dict[str, Any] = {}
     for kv in pairs:
-        if "=" not in kv:
-            die(f"очікую KEY=VALUE, отримав: {kv!r}")
-        k, v = kv.split("=", 1)
+        k, sep, v = kv.partition("=")
+        if not sep or not k:
+            raise BmError(f"expected KEY=VALUE, got {kv!r}")
         try:
             opts[k] = json.loads(v)
         except json.JSONDecodeError:
@@ -148,10 +244,15 @@ def parse_opts(pairs: list) -> dict:
     return opts
 
 
+def _require_file(path: Path) -> None:
+    if not path.is_file():
+        raise BmError(f"no such file: {path}")
+
+
 def _grab_at(video: Path, at: str, out: Path | None, out_root: Path, width: int) -> Path:
     from .frames import grab_frame
-    if not video.exists():
-        die(f"немає файлу {video}")
+
+    _require_file(video)
     t = parse_ts(at)
     path = out or out_root / video.stem / "frames_at" / f"{ts_file(t)}.jpg"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,13 +260,22 @@ def _grab_at(video: Path, at: str, out: Path | None, out_root: Path, width: int)
     return path
 
 
-def cmd_frame(a) -> None:
+def cmd_extract(a: argparse.Namespace) -> None:
+    from .pipeline import run_pipeline
+
+    a.out = resolve_out(a)
+    a.asr_opts = parse_opts(a.opt)
+    run_pipeline(a)
+
+
+def cmd_frame(a: argparse.Namespace) -> None:
     print(_grab_at(a.video, a.at, a.out, a.out_root, a.width))
 
 
-def cmd_agents() -> None:
-    """AGENTS.md: у встановленому пакеті — з wheel, у клоні репо — з кореня."""
+def cmd_agents(a: argparse.Namespace) -> None:
+    """AGENTS.md ships inside the wheel; in a source checkout it is read from the repo root."""
     from importlib import resources
+
     packaged = resources.files(__package__) / "AGENTS.md"
     if packaged.is_file():
         print(packaged.read_text(encoding="utf-8"), end="")
@@ -174,21 +284,29 @@ def cmd_agents() -> None:
     if dev.exists():
         print(dev.read_text(encoding="utf-8"), end="")
         return
-    die("AGENTS.md не знайдено ані в пакеті, ані поруч із кодом")
+    raise BmError("AGENTS.md not found in the package or next to the source")
 
 
-def cmd_transcript(a) -> None:
+def cmd_transcript(a: argparse.Namespace) -> None:
     from .asr import transcribe_range
-    if not a.video.exists():
-        die(f"немає файлу {a.video}")
+
+    _require_file(a.video)
     start = parse_ts(a.frm) if a.frm else 0.0
     end = parse_ts(a.to) if a.to else None
     if end is not None and end <= start:
-        die(f"--to ({a.to}) має бути пізніше за --from ({a.frm or '0'})")
-    opts = parse_opts(a.opt)
+        raise BmError(f"--to ({a.to}) must be later than --from ({a.frm or '0'})")
     lang = None if a.lang in (None, "auto") else a.lang
-    segments = transcribe_range(a.video, start, end, lang, a.asr_model, a.asr_backend,
-                                a.out_root / a.video.stem, opts, a.force)
+    segments = transcribe_range(
+        a.video,
+        start,
+        end,
+        lang,
+        a.asr_model,
+        a.asr_backend,
+        a.out_root / a.video.stem,
+        parse_opts(a.opt),
+        a.force,
+    )
     if a.json:
         print(json.dumps(segments, ensure_ascii=False, indent=2))
     else:
@@ -197,35 +315,55 @@ def cmd_transcript(a) -> None:
             print(f"[{ts(s['start'])}]{tag} {s['text']}")
 
 
-def cmd_ocr(a) -> None:
-    from .ocr import ocr_tesseract, ocr_vision
+def cmd_ocr(a: argparse.Namespace) -> None:
+    from .ocr import get_backend
+
     if a.target.suffix.lower() in IMAGE_EXTS:
-        if not a.target.exists():
-            die(f"немає файлу {a.target}")
+        _require_file(a.target)
         path = a.target
     else:
         if a.at is None:
-            die("для відео потрібен таймкод: --at MM:SS")
+            raise BmError("a video needs a timecode: --at MM:SS")
         path = _grab_at(a.target, a.at, None, a.out_root, a.width)
-    fn = ocr_vision if a.backend == "vision" else ocr_tesseract
-    print(fn(str(path), a.lang.split(",")))
+    print(get_backend(a.backend).recognize(str(path), a.lang.split(",")))
 
 
-def main() -> None:
-    argv = sys.argv[1:]
-    # зворотна сумісність: `bm video.mp4 ...` == `bm extract video.mp4 ...`
-    if argv and argv[0] not in COMMANDS and not argv[0].startswith("-"):
-        argv = ["extract", *argv]
-    a = build_parser().parse_args(argv)
-    if a.cmd == "extract":
-        a.out = resolve_out(a)
-        a.asr_opts = parse_opts(a.opt)
-        run_pipeline(a)
-    elif a.cmd == "agents":
-        cmd_agents()
-    elif a.cmd == "frame":
-        cmd_frame(a)
-    elif a.cmd == "transcript":
-        cmd_transcript(a)
-    else:
-        cmd_ocr(a)
+HANDLERS = {
+    "extract": cmd_extract,
+    "agents": cmd_agents,
+    "frame": cmd_frame,
+    "transcript": cmd_transcript,
+    "ocr": cmd_ocr,
+}
+
+
+def normalize_argv(argv: list[str]) -> list[str]:
+    """``bm video.mp4 ...`` is shorthand for ``bm extract video.mp4 ...``.
+
+    Leading global flags (``-q``/``-v``) are kept in front of the inserted command.
+    """
+    i = 0
+    while i < len(argv) and argv[i] in ("-q", "--quiet", "-v", "--verbose"):
+        i += 1
+    if i < len(argv) and argv[i] not in COMMANDS and not argv[i].startswith("-"):
+        return [*argv[:i], "extract", *argv[i:]]
+    return argv
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(normalize_argv(sys.argv[1:] if argv is None else argv))
+    level = logging.ERROR if args.quiet else logging.DEBUG if args.verbose else logging.INFO
+    setup_logging(level)
+    try:
+        HANDLERS[args.cmd](args)
+    except BmError as e:
+        print(f"[bm] error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("[bm] interrupted", file=sys.stderr)
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

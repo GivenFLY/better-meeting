@@ -1,19 +1,22 @@
-"""Етап 7: збирання самодостатньої теки artifacts/."""
+"""Stage 5: assemble the self-contained ``artifacts/`` folder."""
+
+from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
 from .ocr import norm
-from .render import render_timeline, render_transcript
+from .render import render_screens_index, render_stats, render_timeline, render_transcript
 from .shots import fallback_shots, select_shots, write_shot
 from .utils import log, ts, ts_file
 
 
 def write_bundle(
     art: Path,
-    transcript: list,
-    screen: list,
-    frames: list,
+    transcript: list[dict[str, Any]],
+    screen: list[dict[str, Any]],
+    frames: list[dict[str, Any]],
     duration: float,
     *,
     max_shots: int,
@@ -22,52 +25,31 @@ def write_bundle(
     draw_label: bool,
     pause: float,
 ) -> None:
+    """Rebuild ``art`` from scratch: transcript.md, timeline.md, screens/, screens_index.md."""
     if art.exists():
         shutil.rmtree(art)
-    (art / "screens").mkdir(parents=True, exist_ok=True)
+    (art / "screens").mkdir(parents=True)
 
     shots = select_shots(screen, duration, max_shots)
     if not shots:
         shots = fallback_shots(frames, max_shots)
         if shots:
-            log("OCR-тексту немає — беру кадри рівномірно по часу")
-    log(f"відібрано {len(shots)} скріншотів")
+            log("no OCR text: picking frames evenly over time instead")
+    log(f"selected {len(shots)} screenshots")
 
-    shots_by_t, shot_files, index_rows = {}, [], []
+    shots_by_t: dict[float, str] = {}
+    index_rows: list[tuple[str, str, str]] = []
     for i, ev in enumerate(shots, 1):
-        name = f"{i:03d}_{ts_file(ev['t'])}.jpg"
-        dst = art / "screens" / name
-        write_shot(ev["path"], dst, ts(ev["t"]), shot_width, shot_quality, draw_label)
-        shots_by_t[round(ev["t"], 3)] = f"screens/{name}"
-        shot_files.append(dst)
-        preview = " / ".join(norm(l) for l in ev["added"][:3])[:160]
-        index_rows.append(f"| {ts(ev['t'])} | `screens/{name}` | {preview} |")
+        rel = f"screens/{i:03d}_{ts_file(ev['t'])}.jpg"
+        write_shot(ev["path"], art / rel, ts(ev["t"]), shot_width, shot_quality, draw_label)
+        shots_by_t[round(ev["t"], 3)] = rel
+        preview = " / ".join(norm(line) for line in ev["added"][:3])[:160]
+        index_rows.append((ts(ev["t"]), rel, preview))
 
-    by_lang = {}
-    for s in transcript:
-        if s.get("lang"):
-            by_lang[s["lang"]] = by_lang.get(s["lang"], 0.0) + (s["end"] - s["start"])
-    total_speech = sum(by_lang.values())
-    lang_line = ", ".join(
-        f"{l} {round(100 * v / total_speech)}%"
-        for l, v in sorted(by_lang.items(), key=lambda kv: -kv[1])
-    ) if total_speech else "невідомо"
-    stats = "\n".join([
-        f"- тривалість запису: {ts(duration)}",
-        f"- мови мовлення: {lang_line}",
-        f"- сегментів мови: {len(transcript)}",
-        f"- подій екрана: {len(screen)}",
-        f"- скріншотів у теці: {len(shot_files)}",
-    ])
-
+    stats = render_stats(transcript, screen, duration, len(shots))
     (art / "transcript.md").write_text(render_transcript(transcript), encoding="utf-8")
-    timeline = render_timeline(transcript, screen, shots_by_t, pause, stats)
-    (art / "timeline.md").write_text(timeline, encoding="utf-8")
-
-    (art / "screens_index.md").write_text(
-        "# Скріншоти\n\n| Таймкод | Файл | Що з'явилось на екрані |\n|---|---|---|\n"
-        + "\n".join(index_rows) + "\n",
-        encoding="utf-8",
+    (art / "timeline.md").write_text(
+        render_timeline(transcript, screen, shots_by_t, pause, stats), encoding="utf-8"
     )
-
-    log(f"готово: {art}")
+    (art / "screens_index.md").write_text(render_screens_index(index_rows), encoding="utf-8")
+    log(f"done: {art}")
