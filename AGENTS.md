@@ -25,13 +25,14 @@ Output goes to `runs/<video-name>/` — **one folder per video, never shared**. 
 
 Stages are cached in that folder; re-running the same video is cheap and resumes where it stopped. `--force` redoes everything. `--only audio|transcribe|frames|ocr|bundle` stops early.
 
-`extract` also accepts repeatable `-O key=value` — any Whisper option applied to every transcription pass (e.g. `-O initial_prompt="project terms"` to fix domain vocabulary). Changing `-O`, `--lang`, `--langs`, or the ASR model automatically invalidates the cached transcription — no `--force` needed.
+`extract` also accepts repeatable `-O key=value` — any Whisper option applied to every transcription pass (e.g. `-O initial_prompt="project terms"` to fix domain vocabulary). Every stage records its parameters: changing `-O`, `--lang`, `--langs`, the ASR model, frame or OCR options re-runs only the affected stages — no `--force` needed.
 
 What lands where:
 
 ```
 runs/<name>/
 ├── audio.wav, transcript.json, keyframes.json, screen.json   # stage caches
+├── *.meta.json                                               # parameters each cache was built with
 ├── pass_uk.json, pass_ru.json, pass_en.json                  # per-language ASR passes
 ├── thumbs/, frames/                                          # sampled + full frames
 └── artifacts/                    <- THE DELIVERABLE, self-contained
@@ -76,12 +77,14 @@ bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
 
 - **Low-resolution recording (≤480p)**: OCR is hopeless — run with `--ocr none`. Screenshots are still selected (evenly across screen changes); read them visually instead.
 - **OCR confuses `l/1/I` and `0/O`**: before relying on an exact command/identifier from `timeline.md`, verify against the screenshot (`bm frame` + look, or `bm ocr --backend tesseract` to cross-check).
-- Silence markers `[тиша Nс]` in the timeline are neutral — do not assume what happened during them.
-- A video with no audio track fails at the `audio` stage with a clear `[bm] ПОМИЛКА:` message — that is expected, not a bug to fix.
+- Timeline lines are `[MM:SS] SPEECH: ...`, `[MM:SS] SCREEN (screenshot: screens/...):` followed by indented new on-screen lines, and silence markers `[silence Ns]`. Silences are neutral — do not assume what happened during them.
+- A video with no audio track fails at the `audio` stage with a clear `[bm] error: ...` message (exit code 1) — that is expected, not a bug to fix.
 - ASR models download from HuggingFace on first use (Whisper large-v3-turbo ≈ 1.6 GB, Parakeet TDT v3 ≈ 2.5 GB) — the first run needs network and time.
 
 ## Working on the codebase
 
-- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue) → one module per stage (`audio`, `asr`, `frames`, `ocr`, `shots`, `render`, `bundle`); `utils.py` helpers.
-- Hard rules: no LLM calls inside the tool (extraction only); one output folder per video; point commands keep data on stdout / logs on stderr; every expensive stage must cache and respect `--force`.
-- Style: small modules, Ukrainian docstrings/log messages, English identifiers. No test suite — verify with targeted `python -c` checks and `bm --help` smoke runs, as there is no CI.
+- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue + per-stage cache metadata) → one module per stage: `audio`, `asr/`, `frames`, `ocr/`, `bundle` (with `render` and `shots`); `utils.py` helpers.
+- `asr/` and `ocr/` are provider packages: `base.py` defines the interface (`AsrBackend` / `OcrBackend`), `registry.py` maps names to lazily imported implementations, `core.py` holds the provider-agnostic logic (multi-language merge, caching, OCR diffing). A new provider — local model or hosted API — is one module plus a registry entry; see CONTRIBUTING.md "Adding a provider". Hosted providers read API keys from environment variables only.
+- Hard rules: no LLM calls inside the tool (extraction only); one output folder per video; point commands keep data on stdout / logs on stderr; every expensive stage caches, invalidates on parameter change, and respects `--force`.
+- Style: English everywhere (code, docstrings, log messages, artifact labels); ruff for lint and formatting. User-facing failures raise `BmError` (printed as `[bm] error: ...`), never `sys.exit` deep in the code.
+- Verify with `uv run ruff check . && uv run ruff format --check . && uv run pytest`. Tests use fake providers from `tests/conftest.py` and never download models; CI runs them on Linux and macOS.

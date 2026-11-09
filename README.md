@@ -1,215 +1,192 @@
 # better-meeting
 
-**Talk to your meeting recordings.** better-meeting is a pure extractor: it pulls *everything* out of a video — timestamped speech transcript, text that appeared on screen, key screenshots — into one self-contained folder. Hand that folder to any LLM as context, and ask it anything about the meeting.
+[![CI](https://github.com/GivenFLY/better-meeting/actions/workflows/ci.yml/badge.svg)](https://github.com/GivenFLY/better-meeting/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-**There is no LLM inside the tool.** It never summarizes, never interprets. Extraction is local and deterministic; the understanding is done by whatever model *you* connect — an agent that picks the folder up and reads it as context.
-
-Works for any kind of recording: a daily standup that's all talk, a technical demo full of screen changes, a workshop, a plain call.
+**Talk to your meeting recordings.** `bm` pulls everything out of a video (a timestamped transcript, the text that appeared on screen, and key screenshots) into one self-contained folder. Give that folder to any LLM or agent as context and ask it anything about the meeting.
 
 ```bash
 bm meeting.mp4
-# -> runs/meeting/artifacts/  (transcript.md, timeline.md, screens/)
+# -> runs/meeting/artifacts/   timeline.md, transcript.md, screens/
 ```
 
-## What it extracts
+It works for any recording: a standup that is all talk, a demo full of terminal commands, a workshop, a plain call.
 
-The pipeline runs in cached stages — each writes into the video's working folder, and re-running skips finished stages (`--force` redoes them):
+**There is no LLM inside.** `bm` never summarizes or interprets. It only extracts, and the deterministic local pipeline caches every stage. Understanding the meeting is the job of whatever model *you* connect.
 
-| # | Stage      | What happens                                                       |
-|---|------------|--------------------------------------------------------------------|
-| 1 | `audio`    | `ffmpeg` extracts a 16 kHz mono WAV                                 |
-| 2 | `transcribe` | Whisper (mlx on macOS / faster-whisper elsewhere) with timecodes — one pass per candidate language, merged; or Parakeet, one pass for all languages (opt-in) |
-| 3 | `frames`   | sample thumbnails, keep only keyframes where the screen changed    |
-| 4 | `ocr`      | macOS Vision / tesseract reads each keyframe, diffs new on-screen text |
-| 5 | `bundle`   | assembles `artifacts/`: transcript, timeline, screenshots          |
+## What you get
 
-If OCR finds no readable text (low-res recording, or `--ocr none`), screenshots are still selected — evenly across the moments the screen changed — so a multimodal model can read them itself.
+`artifacts/timeline.md` interleaves speech, silences and new on-screen text:
 
-### Multilingual meetings
+```text
+# Timeline
 
-Whisper's built-in auto-detect samples only the **first 30 seconds** — useless for meetings that mix languages (a Ukrainian standup with English terms and Russian asides is an everyday case). `bm` doesn't guess:
+- duration: 42:10
+- speech languages: uk 71%, en 29%
+- speech segments: 612
+- screen events: 48
+- screenshots in screens/: 30
 
-When no language is pinned, it transcribes the whole recording **once per language** in `--langs` (default `uk,ru,en`), then merges: the timeline is covered by the segments from whichever pass Whisper was most confident about (`avg_logprob`) at that point. This survives *any* language mixing — down to the language switching between neighboring sentences — because every stretch of audio was decoded in every candidate language and the best decode wins locally. Hallucinated segments (Whisper's classic silence artifacts) are filtered by the standard `no_speech`/`logprob` heuristic.
-
-The cost is proportional: 3 languages = 3 transcription passes. Each pass is cached separately (`pass_uk.json`, …), so an interrupted run resumes without redoing finished passes. If you know the meeting's language, pin it — `--lang uk` — for a single pass. Adjust the candidate set with `--langs uk,en` etc.
-
-In multilingual recordings every transcript line carries its language tag (`[uk]`, `[en]`, `[ru]`), and the header of `timeline.md` reports the language share.
-
-### Parakeet: one pass instead of three (opt-in, macOS)
-
-`--asr-backend parakeet` swaps Whisper for NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) via [`parakeet-mlx`](https://github.com/senstella/parakeet-mlx): a single multilingual model (25 European languages, Ukrainian and Russian included) that decodes the whole recording **once**, with punctuation and sentence-level timestamps built in. It is several times faster than three Whisper passes and needs no `--langs`.
-
-```bash
-uv tool install "better-meeting[parakeet] @ git+https://github.com/GivenFLY/better-meeting.git"
-bm meeting.mp4 --asr-backend parakeet
+[12:31] SPEECH: [uk] Давайте подивимось, що з подами на стейджингу.
+[12:40] SCREEN (screenshot: screens/007_00-12-40.jpg):
+    $ kubectl get pods -n staging
+    api-7d9f8c6b5-x2lq   0/1   CrashLoopBackOff   5   3m
+[12:44] SPEECH: [en] Okay, so the API is crash-looping again.
+[12:58] [silence 14s]
 ```
 
-What changes under Parakeet:
-
-- `--langs` has no effect (one pass). `-O` is rejected — it carries Whisper decoding options.
-- The model does not take a language: `--lang uk` only labels the segments. With `--lang auto` each segment is tagged by a script heuristic (Latin → `en`; Cyrillic → `uk`/`ru` by marker letters like `і`/`ї`/`є` vs `ы`/`э`/`ё` and language-specific function words), so the `[uk]`/`[ru]`/`[en]` tags and the language share in `timeline.md` stay. Short replies without markers inherit the previous segment's language.
-- Cache is one file, `pass_parakeet.json`, independent of `--lang`; switching between backends never invalidates the other's passes. `bm transcript --asr-backend parakeet` slices ranges from it like with Whisper.
-- Whisper's silence-hallucination filter does not apply; Parakeet does not produce those artifacts.
-
-Whisper stays the default. Parakeet is macOS-only for now (`parakeet-mlx` is an MLX package); on Linux/Windows `bm` exits with a clear message.
-
-## One folder per video
-
-Every recording gets **its own working folder** — outputs never collide or overwrite each other.
-
-By default the folder is `runs/<video-name>/`:
-
-```
-runs/
-├── standup-2026-08-20/
-│   ├── audio.wav
-│   ├── transcript.json
-│   ├── keyframes.json
-│   ├── thumbs/ · frames/
-│   └── artifacts/          <- the interface: hand this folder to your LLM
-│       ├── transcript.md   — timestamped speech
-│       ├── timeline.md     — speech + new on-screen text + silences, merged
-│       └── screens/ · screens_index.md
-└── onboarding-call/
-    └── ...
-```
-
-- Change the root with `--out-root some/dir` (folders become `some/dir/<video-name>/`).
-- Pin an exact folder with `--out path/to/dir` (overrides the per-video naming).
-
-Because the folder name is derived from the video, re-running the **same** recording reuses its cache; a **different** recording lands in a **different** folder.
+Next to it are `transcript.md` (speech only), `screens/*.jpg` (timecode-stamped) and `screens_index.md`.
 
 ## Install
 
-Requires **Python 3.12+** and **ffmpeg/ffprobe** on your `PATH`.
-
-### As a global `bm` command (recommended)
+You need **Python 3.12+** and **ffmpeg** on your `PATH`.
 
 ```bash
+# macOS (Apple Silicon): Whisper via MLX and OCR via the Vision framework, out of the box
 uv tool install git+https://github.com/GivenFLY/better-meeting.git
-bm meeting.mp4
-```
 
-On Linux/Windows add the faster-whisper extra:
-
-```bash
+# Linux / Windows: Whisper via faster-whisper; install tesseract-ocr from your package manager
 uv tool install "better-meeting[faster] @ git+https://github.com/GivenFLY/better-meeting.git"
 ```
 
-Update later with `uv tool upgrade better-meeting`, remove with `uv tool uninstall better-meeting`.
+Add the `[parakeet]` extra for the optional Parakeet engine (macOS). Upgrade with `uv tool upgrade better-meeting`. `pipx install` works the same way.
 
-### From a clone (for development)
+On first use the ASR models download from Hugging Face: about 1.6 GB for Whisper large-v3-turbo, 2.5 GB for Parakeet TDT v3.
 
-```bash
-git clone https://github.com/GivenFLY/better-meeting.git
-cd better-meeting
+## How it works
 
-# with uv
-uv sync
-uv run bm meeting.mp4
+The pipeline runs in stages. Each stage caches its result in the video's working folder, so a re-run only redoes what changed:
 
-# or with pip
-pip install -e .
-bm meeting.mp4
-```
+| # | Stage        | What happens |
+|---|--------------|--------------|
+| 1 | `audio`      | ffmpeg extracts 16 kHz mono audio |
+| 2 | `transcribe` | timed speech recognition with the selected [ASR provider](#providers) |
+| 3 | `frames`     | thumbnails are sampled, and full frames are kept only where the screen changed |
+| 4 | `ocr`        | each keyframe is read with the selected [OCR provider](#providers); only *new* lines are kept |
+| 5 | `bundle`     | `artifacts/` is assembled: timeline, transcript, screenshots |
 
-### System dependencies
+Each stage records the parameters it was built with. If you change `--lang`, `-O`, `--frame-interval`, `--ocr-lang` and so on, the affected stages and everything downstream re-run automatically. `--force` redoes everything.
 
-- **ffmpeg / ffprobe** — required (audio extraction, frame sampling, duration).
-- **macOS** — Whisper via `mlx-whisper` and OCR via the built-in Vision framework work out of the box. For the optional Parakeet engine add the extra: `pip install -e ".[parakeet]"`.
-- **Linux / Windows** — install the faster-whisper backend and tesseract:
-  ```bash
-  pip install -e ".[faster]"   # faster-whisper ASR backend
-  # + tesseract-ocr from your package manager, then run with: --ocr tesseract
-  ```
+If OCR finds no readable text (a low-res recording, or `--ocr none`), screenshots are still picked evenly across the moments the screen changed, so a multimodal model can read them itself.
+
+### Multilingual meetings
+
+Whisper's built-in language detection only listens to the **first 30 seconds**. That is useless for meetings that mix languages, for example a Ukrainian standup with English terms and Russian asides.
+
+With `--lang auto` (the default), `bm` transcribes the whole recording **once per candidate language** (`--langs`, default `uk,ru,en`). It then merges the passes: each stretch of the timeline keeps the segments from the pass Whisper was most confident about (`avg_logprob`). This holds up even when the language changes between sentences. Silence hallucinations are filtered with the standard `no_speech_prob` and `avg_logprob` heuristic.
+
+The cost is one pass per language, and each pass is cached on its own. If you know the language, pin it with `--lang uk` for a single pass. If the meeting is in other languages, set `--langs de,en`.
+
+Mixed-language transcripts tag every line (`[uk]`, `[en]`), and the timeline header shows each language's share.
+
+### Parakeet: one pass for every language
+
+`--asr-backend parakeet` uses NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) via [parakeet-mlx](https://github.com/senstella/parakeet-mlx). It is a single multilingual model covering 25 European languages that decodes the recording **once**, with punctuation. It is several times faster than three Whisper passes.
+
+- The model takes no language input. `--langs` is ignored and `-O` is rejected. A pinned `--lang` only labels segments. With `--lang auto`, a script heuristic labels each segment `uk`, `ru` or `en`, so treat those tags as a hint.
+- macOS only for now. Whisper stays the default.
 
 ## Usage
 
 ```bash
-bm extract RECORDING.mp4 [options]   # `bm RECORDING.mp4` is the same thing
+bm extract VIDEO [options]     # `bm VIDEO` is the same
 ```
 
-| Command                  | What it does                                          |
-|--------------------------|-------------------------------------------------------|
-| `bm extract VIDEO`       | full pipeline → `runs/<name>/artifacts/`              |
-| `bm frame VIDEO -t T`    | one frame at a timecode                               |
-| `bm ocr VIDEO -t T`      | OCR a frame at a timecode (or an existing image)      |
-| `bm transcript VIDEO`    | transcript of a time range, any Whisper options       |
-| `bm agents`              | print the agent guide ([AGENTS.md](AGENTS.md))        |
+| Command               | What it does |
+|-----------------------|--------------|
+| `bm extract VIDEO`    | full pipeline → `runs/<name>/artifacts/` |
+| `bm frame VIDEO -t T` | one frame at a timecode; prints its path |
+| `bm ocr VIDEO -t T`   | OCR of a frame at a timecode (or of an existing image) |
+| `bm transcript VIDEO` | transcript of a time range, with any Whisper option |
+| `bm agents`           | print the agent guide ([AGENTS.md](AGENTS.md)) |
 
-Common `extract` options:
+Common `extract` options (run `bm extract --help` for the full list):
 
-| Option                 | Default        | Meaning                                             |
-|------------------------|----------------|-----------------------------------------------------|
-| `--out-root DIR`       | `runs`         | root that holds one folder per video                |
-| `--out DIR`            | *(auto)*       | exact working folder (overrides per-video naming)   |
-| `--force`              | off            | redo every stage, ignore cache                      |
-| `--only STAGE`         | —              | stop after `audio`/`transcribe`/`frames`/`ocr`/`bundle` |
-| `--lang uk\|en\|ru\|auto` | `auto`      | pin one language (single pass) or `auto` (pass per `--langs`, best merge) |
-| `--langs L1,L2,...`    | `uk,ru,en`     | candidate languages tried when `--lang auto`        |
-| `--asr-backend auto\|mlx\|faster\|parakeet` | `auto` | `auto` = Whisper (mlx on macOS, faster elsewhere); `parakeet` = one pass for all languages, macOS |
-| `--asr-model NAME`     | `large-v3-turbo` | Whisper model, or a HF repo id under `--asr-backend parakeet` |
-| `--frame-interval SEC` | `2.0`          | thumbnail sampling interval                          |
-| `--max-shots N`        | `30`           | how many screenshots to keep in `artifacts/`        |
-| `--ocr vision\|tesseract\|none` | `vision` on macOS | OCR backend                            |
-| `-O KEY=VALUE`         | —              | any Whisper option for transcription, repeatable (e.g. `-O initial_prompt="project terms"`); Whisper only |
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--out-root DIR` | `runs` | root holding one folder per video |
+| `--out DIR` | auto | exact working folder |
+| `--force` | off | ignore every cache |
+| `--only STAGE` | | stop after `audio` / `transcribe` / `frames` / `ocr` / `bundle` |
+| `--lang CODE` | `auto` | pin one language, or `auto` = pass per `--langs` + merge |
+| `--langs L1,L2` | `uk,ru,en` | candidate languages for `--lang auto` |
+| `--asr-backend NAME` | `auto` | `mlx`, `faster` or `parakeet`; `auto` = mlx on macOS, faster elsewhere |
+| `--asr-model NAME` | per backend | Whisper model name, or a Hugging Face repo id |
+| `-O KEY=VALUE` | | any Whisper decoding option, repeatable |
+| `--ocr NAME` | `vision` on macOS, else `tesseract` | OCR backend, or `none` |
+| `--ocr-lang TAGS` | `en-US,uk-UA` | OCR languages (BCP 47) |
+| `--frame-interval SEC` | `2` | thumbnail sampling interval |
+| `--max-shots N` | `30` | screenshots kept in `artifacts/` |
 
-Run `bm --help` (or `bm extract --help`) for the full list.
+Global flags: `-q` (errors only), `-v` (debug), `--version`.
 
 ### Examples
 
 ```bash
-# Ukrainian meeting
-bm standup.mov --lang uk
-
-# low-res recording where OCR is hopeless — skip it, keep the screenshots
-bm call-360p.mp4 --ocr none
-
-# fix domain vocabulary with a glossary hint
-bm demo.mkv -O initial_prompt="service names, staging, rollout"
-
-# batch a directory — each file gets its own folder under runs/
-for f in recordings/*.mp4; do bm "$f"; done
-
-# custom output root, keep more screenshots
-bm demo.mkv --out-root out --max-shots 50
+bm standup.mov --lang uk                                 # one known language, single pass
+bm call-360p.mp4 --ocr none                              # OCR is hopeless at 360p; keep screenshots
+bm demo.mkv -O initial_prompt="Kubernetes, Helm, Argo"   # bias Whisper toward domain terms
+bm demo.mkv --asr-backend parakeet                       # fastest multilingual run (macOS)
+for f in recordings/*.mp4; do bm "$f"; done              # batch: one folder per file
 ```
 
-## Point queries — tooling for agents
+### One folder per video
 
-Besides the full pipeline, `bm` has point commands so an LLM agent can drill into a specific moment without re-running anything. All print their result to stdout (logs go to stderr):
+Every recording gets its own working folder, `runs/<video-name>/` by default. Running the same file again reuses its cache, and a different file lands in a different folder. `--out-root` changes the root, and `--out` pins an exact folder.
+
+```text
+runs/standup-2026-08-20/
+├── audio.wav, transcript.json, keyframes.json, screen.json, *.meta.json   # stage caches
+├── pass_uk.json, pass_en.json, ...                                         # per-language ASR passes
+├── thumbs/, frames/
+└── artifacts/        <- hand this folder to your LLM
+```
+
+## Point queries for agents
+
+Point commands let an agent drill into one moment without re-running the pipeline. Data goes to stdout and logs to stderr:
 
 ```bash
-# grab one frame at a timecode (prints the file path)
-bm frame meeting.mp4 -t 12:40
-# -> runs/meeting/frames_at/00-12-40.jpg
-
-# OCR a frame at a timecode (prints the recognized text)
-bm ocr meeting.mp4 -t 12:40
-
-# OCR an existing image (e.g. a screenshot from artifacts/screens/)
-bm ocr runs/meeting/artifacts/screens/007_00-14-10.jpg
-
-# re-transcribe a time range in a specific language
+bm frame meeting.mp4 -t 12:40                 # -> runs/meeting/frames_at/00-12-40.jpg
+bm ocr meeting.mp4 -t 12:40                   # recognized text
+bm ocr runs/meeting/artifacts/screens/007_00-12-40.jpg --backend tesseract   # second opinion
 bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang en
-
-# ...with any whisper option passed through, and JSON output
-bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
-    -O temperature=0.2 -O initial_prompt="назви сервісів, реліз, стейджинг" --json
+bm transcript meeting.mp4 --from 10:00 --to 12:30 -O initial_prompt="Argo, Helm" --json
 ```
 
-Timecodes accept `SS`, `MM:SS`, or `HH:MM:SS`. The typical agent loop: read `timeline.md`, spot a suspicious stretch, pull the exact frame with `bm frame`, or re-run just that stretch with `bm transcript` — a different language, a domain `initial_prompt` to fix mangled terms, whatever Whisper accepts via repeatable `-O key=value` (values parse as JSON).
-
-`bm transcript` results are **cached by their full parameter set** (range + language + model + backend + options) under `runs/<name>/transcripts_at/` — repeating the same query returns instantly; `--force` recomputes.
-
-It also **reuses the full pipeline's work**: if the video already went through `bm extract` with the same model, backend and `-O` options, the range is sliced straight out of the cached passes — a pinned `--lang` serves from that language's pass, no `--lang` serves from the merged transcript. No ASR runs at all. Different options or `--force` trigger a real re-run.
-
-Frames land under `frames_at/`; use `-o out.jpg` to override.
+Timecodes accept `SS`, `MM:SS` or `HH:MM:SS`. `bm transcript` results are cached by their full parameter set. If `extract` already ran with the same model, backend and options, the range is sliced from its cache and no ASR runs at all.
 
 ## Talking to the video
 
-`artifacts/` is the whole interface. Tell your agent — *"better-meeting is installed as `bm`; run `bm agents` and follow that guide to work with `<video>`"*. `bm agents` prints the full agent manual ([AGENTS.md](AGENTS.md)): how to extract, what the artifacts mean, and the point commands for drilling into moments. Then just ask anything: "what did we decide about the release?", "what command did they run at 12:40?", "summarize each person's status".
+Tell your agent: *"better-meeting is installed as `bm`; run `bm agents` and follow that guide to work with `<video>`"*. The guide covers extraction, what each artifact means, and the point commands. Then ask anything, for example "what did we decide about the release?", "what command did they run at 12:40?" or "summarize each person's status".
+
+## Providers
+
+Speech recognition and OCR are **pluggable providers** behind small interfaces ([`AsrBackend`](better_meeting/asr/base.py), [`OcrBackend`](better_meeting/ocr/base.py)):
+
+| Kind | Provider | Runs | Notes |
+|------|----------|------|-------|
+| ASR | `mlx` | local, macOS | Whisper on Apple Silicon (default on macOS) |
+| ASR | `faster` | local, any OS | Whisper via CTranslate2 (default elsewhere) |
+| ASR | `parakeet` | local, macOS | one multilingual pass, no language hint |
+| OCR | `vision` | local, macOS | Apple Vision framework (default on macOS) |
+| OCR | `tesseract` | local, any OS | tesseract CLI |
+
+Every built-in provider runs locally today, and the interfaces are designed for hosted providers as well. A cloud speech-to-text or vision API is a provider that reads its API key from the environment. The pipeline, caching, language merge and artifact format do not change. See [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-provider) for how to add one.
+
+## Roadmap
+
+- Hosted ASR and OCR providers (API-key based), next to the local ones
+- Parakeet on Linux
+- Speaker labels (diarization)
+
+Have a use case? [Open an issue](https://github.com/GivenFLY/better-meeting/issues).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions are under Apache 2.0, with a DCO sign-off.
 
 ## License
 
-[Apache 2.0](LICENSE)
+[Apache 2.0](LICENSE). Third-party model attributions are in [NOTICE](NOTICE).
