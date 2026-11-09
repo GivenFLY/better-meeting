@@ -16,9 +16,9 @@ from .base import AsrBackend
 Factory = Callable[[], AsrBackend]
 
 _FACTORIES: dict[str, Factory | str] = {
-    "mlx": "better_meeting.asr.whisper_mlx:MlxWhisperBackend",
-    "faster": "better_meeting.asr.whisper_faster:FasterWhisperBackend",
-    "parakeet": "better_meeting.asr.parakeet:ParakeetBackend",
+    "mlx": "better_meeting.asr.providers.mlx_whisper:MlxWhisperBackend",
+    "faster": "better_meeting.asr.providers.faster_whisper:FasterWhisperBackend",
+    "parakeet": "better_meeting.asr.providers.parakeet:ParakeetBackend",
 }
 _INSTANCES: dict[str, AsrBackend] = {}
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..utils import BmError
-from .base import AsrBackend, RawSegment
+from ...utils import BmError
+from ..base import AsrBackend, RawSegment
 
 WHISPER_MODEL = "large-v3-turbo"
 

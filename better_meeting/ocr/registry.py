@@ -12,8 +12,8 @@ from .base import OcrBackend
 Factory = Callable[[], OcrBackend]
 
 _FACTORIES: dict[str, Factory | str] = {
-    "vision": "better_meeting.ocr.vision:VisionOcrBackend",
-    "tesseract": "better_meeting.ocr.tesseract:TesseractOcrBackend",
+    "vision": "better_meeting.ocr.providers.vision:VisionOcrBackend",
+    "tesseract": "better_meeting.ocr.providers.tesseract:TesseractOcrBackend",
 }
 _INSTANCES: dict[str, OcrBackend] = {}
 

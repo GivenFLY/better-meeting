@@ -61,8 +61,10 @@ class AcmeSpeechBackend(AsrBackend):
 
 **OCR**: subclass `better_meeting.ocr.OcrBackend` and implement `recognize(path, langs) -> str`.
 
-Register a built-in provider in the `_FACTORIES` dict of `asr/registry.py` or
-`ocr/registry.py`, using a `"module:Class"` string. Its module, and any SDK it
+Built-in providers live in `better_meeting/asr/providers/` and
+`better_meeting/ocr/providers/`, one module each. Register a new one in the
+`_FACTORIES` dict of `asr/registry.py` or `ocr/registry.py`, using a
+`"module:Class"` string (e.g. `"better_meeting.asr.providers.acme:AcmeSpeechBackend"`). Its module, and any SDK it
 imports, then loads only when someone selects it. Put the SDK in an optional extra in
 `pyproject.toml`, not in the core dependencies.
 

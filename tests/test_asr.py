@@ -80,7 +80,7 @@ def test_unknown_backend():
 
 
 def test_parakeet_model_resolution():
-    from better_meeting.asr.parakeet import PARAKEET_MODEL, ParakeetBackend
+    from better_meeting.asr.providers.parakeet import PARAKEET_MODEL, ParakeetBackend
 
     p = ParakeetBackend()
     assert p.resolve_model(None) == PARAKEET_MODEL

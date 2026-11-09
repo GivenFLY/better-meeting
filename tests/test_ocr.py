@@ -1,5 +1,5 @@
 from better_meeting.ocr import added_lines, ocr_frames
-from better_meeting.ocr.tesseract import tesseract_langs
+from better_meeting.ocr.providers.tesseract import tesseract_langs
 
 
 def test_added_lines_ignores_whitespace_and_old_lines():
