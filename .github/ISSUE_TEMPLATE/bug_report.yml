@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The full `bm ...` command and its stderr (the `[bm]` lines). Remove anything private.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: bm version
+      description: Output of `bm --version`.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS and version, e.g. macOS 26.1 (Apple M3) or Ubuntu 24.04.
+    validations:
+      required: true
+  - type: input
+    id: backends
+    attributes:
+      label: ASR / OCR backend
+      description: e.g. `--asr-backend parakeet`, `--ocr tesseract`, or defaults.
