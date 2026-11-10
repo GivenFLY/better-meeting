@@ -60,7 +60,7 @@ The pipeline runs in stages. Each stage caches its result in the video's working
 
 | # | Stage        | What happens |
 |---|--------------|--------------|
-| 1 | `audio`      | ffmpeg extracts 16 kHz mono audio |
+| 1 | `audio`      | ffmpeg extracts 16 kHz mono audio; all audio streams are mixed |
 | 2 | `transcribe` | timed speech recognition with the selected [ASR provider](#providers) |
 | 3 | `frames`     | thumbnails are sampled, and full frames are kept only where the screen changed |
 | 4 | `ocr`        | each keyframe is read with the selected [OCR provider](#providers); only *new* lines are kept |
