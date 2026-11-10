@@ -40,6 +40,34 @@ def test_merge_empty():
     assert merge_passes([[], []]) == []
 
 
+def test_merge_does_not_repeat_a_line_another_pass_already_covered():
+    # "A again" is the same sentence from another pass. It adds 0.5 s past "A"
+    # and outscores "B", the next real line.
+    passes = [
+        [seg(3, 9.5, "A", "uk", -0.2)],
+        [seg(3, 10, "A again", "ru", -0.25)],
+        [seg(10, 16, "B", "en", -0.3)],
+    ]
+    assert [s["text"] for s in merge_passes(passes)] == ["A", "B"]
+
+
+def test_merge_takes_a_segment_that_mostly_continues_past_the_cursor():
+    passes = [[seg(0, 5, "X", "uk", -0.3)], [seg(4, 12, "Y", "en", -0.2)]]
+    assert [s["text"] for s in merge_passes(passes)] == ["X", "Y"]
+
+
+def test_merge_keeps_a_short_line_before_a_more_confident_one():
+    # The long line outscores "Так." in both passes and starts within 2 s of the cursor.
+    uk = [seg(0, 1.5, "Так.", "uk", -0.6), seg(1.5, 6, "uk-long", "uk", -0.2)]
+    en = [seg(0, 1.5, "Tuck.", "en", -0.9), seg(1.5, 6, "en-long", "en", -0.8)]
+    assert [s["text"] for s in merge_passes([uk, en])] == ["Так.", "uk-long"]
+
+
+def test_merge_keeps_a_line_of_200_ms():
+    passes = [[seg(0, 2, "a", "en"), seg(10, 10.2, "b", "en")]]
+    assert [s["text"] for s in merge_passes(passes)] == ["a", "b"]
+
+
 # --- language heuristic ------------------------------------------------------
 
 

@@ -131,29 +131,49 @@ def is_hallucination(s: RawSegment) -> bool:
     return s["nospeech"] > 0.6 and s["score"] < -1.0
 
 
+def _adds_speech(s: RawSegment, cursor: float) -> bool:
+    """True if ``s`` still adds speech once the timeline is covered up to ``cursor``.
+
+    A segment that starts at or after the cursor always does. One that crosses the
+    cursor must reach more than 0.2 s past it and add at least half its length
+    there. Less than that is another pass's wording of a stretch already covered.
+    """
+    if s["start"] >= cursor:
+        return s["end"] > cursor
+    return s["end"] > cursor + 0.2 and s["end"] - cursor >= (s["end"] - s["start"]) / 2
+
+
 def merge_passes(passes: Iterable[list[RawSegment]]) -> list[RawSegment]:
     """Greedy timeline cover: at each point take the most confident segment covering it.
 
     Segments are first filtered with :func:`is_hallucination`. The cursor walks
-    forward; candidates are segments that end after it and start no later than
-    2 s past it, so short gaps do not split the cover.
+    forward. Each pass offers its next segment that still adds speech past the
+    cursor (:func:`_adds_speech`), provided it starts no later than 2 s past the
+    cursor, so short gaps do not split the cover. The most confident offer wins.
+
+    Only the next segment of a pass competes. If a later one could win, the
+    segment before it would never be taken.
     """
-    segs = [s for p in passes for s in p if not is_hallucination(s)]
-    if not segs:
+    kept = [
+        sorted((s for s in p if not is_hallucination(s)), key=lambda s: s["start"]) for p in passes
+    ]
+    starts = [s["start"] for p in kept for s in p]
+    if not starts:
         return []
-    segs.sort(key=lambda s: s["start"])
 
     out: list[RawSegment] = []
-    cursor = segs[0]["start"]
+    cursor = min(starts)
     while True:
-        cands = [s for s in segs if s["end"] > cursor + 0.2 and s["start"] <= cursor + 2.0]
+        offers = (next((s for s in p if _adds_speech(s, cursor)), None) for p in kept)
+        cands = [s for s in offers if s is not None and s["start"] <= cursor + 2.0]
         if not cands:
-            rest = [s["start"] for s in segs if s["start"] > cursor]
+            rest = [t for t in starts if t > cursor]
             if not rest:
                 break
             cursor = min(rest)
             continue
-        best = max(cands, key=lambda s: s["score"])
+        # On equal scores the earlier segment wins.
+        best = max(cands, key=lambda s: (s["score"], -s["start"]))
         out.append(best)
         cursor = best["end"]
     return out
