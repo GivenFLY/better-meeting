@@ -19,8 +19,9 @@ All notable changes to this project are documented here. The format follows
 - A recording with more than one audio stream is now transcribed from all of
   them, mixed. Before, only the stream that ffmpeg selects by default was used,
   so a recording with the microphone and the system audio in separate streams
-  lost one side of the conversation. An existing `audio.wav` is kept: use
-  `--force` to rebuild it.
+  lost one side of the conversation. Each stream keeps the level it has alone
+  and its own start time, and a limiter turns the sum down where it would clip.
+  An existing `audio.wav` is kept: use `--force` to rebuild it.
 
 ## [0.4.1] - 2026-11-11
 
