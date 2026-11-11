@@ -1,6 +1,6 @@
 [project]
 name = "better-meeting"
-version = "0.4.0"
+version = "0.4.1"
 description = "Turn a meeting recording into LLM-ready context: timestamped transcript, on-screen text and key screenshots."
 readme = "README.md"
 requires-python = ">=3.12"
