@@ -15,6 +15,12 @@ SPIKE_DELTA = 60  # one cell changing this much keeps the frame on its own
 def sample_thumbs(video: Path, out_dir: Path, interval: float) -> list[dict[str, Any]]:
     """One 320 px thumbnail every ``interval`` seconds -> ``[{t, path}]``.
 
+    The thumbnail at ``t`` is the frame that was on screen at ``t``, the same
+    frame :func:`grab_frame` returns. That needs ``round=up``: with its default
+    rounding the ``fps`` filter takes a frame from up to half an interval after
+    ``t``. ``start_time=0`` keeps the first thumbnail at 0 when the video starts
+    later than the audio.
+
     ``out_dir`` is emptied first: leftovers from a run with another interval
     would otherwise be picked up with wrong timestamps.
     """
@@ -33,7 +39,7 @@ def sample_thumbs(video: Path, out_dir: Path, interval: float) -> list[dict[str,
             "-i",
             str(video),
             "-vf",
-            f"fps=1/{interval},scale=320:-2",
+            f"fps=1/{interval}:round=up:start_time=0,scale=320:-2",
             "-q:v",
             "6",
             str(out_dir / "%06d.jpg"),
@@ -82,7 +88,16 @@ def pick_keyframes(
 
 
 def grab_frame(video: Path, t: float, path: Path, width: int) -> None:
-    """One full-size frame at ``t`` seconds, scaled to ``width``."""
+    """The frame that was on screen at ``t`` seconds, scaled to ``width``.
+
+    ``-ss`` alone gives the first frame at or after ``t``. In a recording that
+    has no frames while the screen is still, that is the next change. So decoding
+    starts at the keyframe before ``t`` (``-noaccurate_seek``, which also makes
+    timestamps relative to ``t``), the ``fps`` filter repeats each frame until
+    the next one, and ``select`` takes the frame that is current at 0 and drops
+    the rest. If the video starts after ``t``, that is its first frame: 100 ticks
+    per second is finer than the frame interval.
+    """
     need("ffmpeg")
     run(
         [
@@ -93,12 +108,13 @@ def grab_frame(video: Path, t: float, path: Path, width: int) -> None:
             "-y",
             "-ss",
             f"{t:.3f}",
+            "-noaccurate_seek",
             "-i",
             str(video),
             "-frames:v",
             "1",
             "-vf",
-            f"scale={width}:-2",
+            f"fps=100:round=up,select='gte(t,0)*eq(selected_n,0)',scale={width}:-2",
             "-q:v",
             "2",
             str(path),

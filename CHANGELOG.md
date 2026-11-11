@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- A keyframe's full frame now shows the screen that its thumbnail showed. Before,
+  the thumbnail was taken up to half a `--frame-interval` after its timestamp and
+  the full frame at the timestamp. A screen change between the two was detected,
+  but the old screen was read: the new text was missing from the timeline until the
+  next change, and the screenshot showed the old screen. Existing working folders
+  keep their keyframes and frames: use `--force` to rebuild them.
+- `bm frame`, `bm ocr -t` and the frames stage now return the frame that was on
+  screen at the timecode. Before, they returned the first frame at or after it. In a
+  recording that has no frames while the screen is still, that is the next change.
+
 ## [0.4.1] - 2026-11-11
 
 ### Added
