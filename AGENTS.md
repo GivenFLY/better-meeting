@@ -9,7 +9,7 @@ better-meeting is a **pure extractor**: it pulls everything out of a meeting rec
 Requires Python 3.12+ and `ffmpeg`/`ffprobe` on PATH.
 
 ```bash
-uv tool install git+https://github.com/GivenFLY/better-meeting.git   # global `bm` command
+uv tool install better-meeting   # global `bm` command
 # in a clone: uv sync && uv run bm --help
 # macOS: mlx-whisper + Vision OCR out of the box; add the [parakeet] extra for the optional Parakeet engine
 # Linux/Windows: install the [faster] extra + tesseract-ocr, run with --ocr tesseract

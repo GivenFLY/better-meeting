@@ -44,10 +44,10 @@ You need **Python 3.12+** and **ffmpeg** on your `PATH`.
 
 ```bash
 # macOS (Apple Silicon): Whisper via MLX and OCR via the Vision framework, out of the box
-uv tool install git+https://github.com/GivenFLY/better-meeting.git
+uv tool install better-meeting
 
 # Linux / Windows: Whisper via faster-whisper; install tesseract-ocr from your package manager
-uv tool install "better-meeting[faster] @ git+https://github.com/GivenFLY/better-meeting.git"
+uv tool install "better-meeting[faster]"
 ```
 
 Add the `[parakeet]` extra for the optional Parakeet engine (macOS). Upgrade with `uv tool upgrade better-meeting`. `pipx install` works the same way.

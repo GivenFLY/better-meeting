@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-11
+
+### Added
+- Published on PyPI: install with `uv tool install better-meeting`. Releases are
+  built and uploaded by GitHub Actions through PyPI Trusted Publishing when a
+  version tag is pushed.
+
 ## [0.4.0] - 2026-11-09
 
 ### Changed
@@ -57,7 +64,8 @@ All notable changes to this project are documented here. The format follows
 
 - Initial public release.
 
-[Unreleased]: https://github.com/GivenFLY/better-meeting/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/GivenFLY/better-meeting/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/GivenFLY/better-meeting/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/GivenFLY/better-meeting/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/GivenFLY/better-meeting/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/GivenFLY/better-meeting/releases/tag/v0.2.0
