@@ -8,10 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - `--lang auto` no longer prints a sentence twice when another pass's copy of it
-  ends slightly later. It also no longer drops a short line that is followed by a
-  more confident line of the same pass, or a line of 0.2 s or less. To re-merge an
-  existing working folder, delete its `transcript.json`: the cached passes are
-  reused and ASR does not run again.
+  ends less than 1 s later and most of that copy is already covered. It also no
+  longer drops a short line that is followed by a more confident line of the same
+  pass, or a line of 0.2 s or less. To re-merge an existing working folder, delete
+  its `transcript.json`: the cached passes are reused and ASR does not run again.
 - A keyframe's full frame now shows the screen that its thumbnail showed. Before,
   the thumbnail was taken up to half a `--frame-interval` after its timestamp and
   the full frame at the timestamp. A screen change between the two was detected,

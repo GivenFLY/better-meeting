@@ -51,6 +51,16 @@ def test_merge_does_not_repeat_a_line_another_pass_already_covered():
     assert [s["text"] for s in merge_passes(passes)] == ["A", "B"]
 
 
+def test_merge_does_not_repeat_a_line_that_ends_slightly_later_before_a_pause():
+    # As above, "A again" adds 0.5 s past "A", but nothing follows within 2 s.
+    passes = [
+        [seg(3, 9.5, "A", "uk", -0.2)],
+        [seg(3, 10, "A again", "ru", -0.25)],
+        [seg(20, 26, "B", "en", -0.3)],
+    ]
+    assert [s["text"] for s in merge_passes(passes)] == ["A", "B"]
+
+
 def test_merge_takes_a_segment_that_mostly_continues_past_the_cursor():
     passes = [[seg(0, 5, "X", "uk", -0.3)], [seg(4, 12, "Y", "en", -0.2)]]
     assert [s["text"] for s in merge_passes(passes)] == ["X", "Y"]
@@ -66,6 +76,40 @@ def test_merge_keeps_a_short_line_before_a_more_confident_one():
 def test_merge_keeps_a_line_of_200_ms():
     passes = [[seg(0, 2, "a", "en"), seg(10, 10.2, "b", "en")]]
     assert [s["text"] for s in merge_passes(passes)] == ["a", "b"]
+
+
+def test_merge_keeps_speech_only_a_crossing_segment_covers():
+    # Nothing but "A" covers 6-10 s.
+    passes = [[seg(0, 10, "A", "uk", -0.3)], [seg(0, 6, "B", "en", -0.2)]]
+    assert [s["text"] for s in merge_passes(passes)] == ["B", "A"]
+
+
+def test_merge_keeps_a_crossing_segment_when_the_winner_would_skip_its_stretch():
+    # "Мм." takes 0-2 s from the English sentence. The next English line starts at
+    # 3.5 s, so only the sentence covers 2-3.5 s. The two English lines have the
+    # same score, as lines of one Whisper window do, and the earlier one wins.
+    uk = [seg(0, 2, "Мм.", "uk", -0.8)]
+    en = [seg(0, 3.5, "sentence", "en", -0.9), seg(3.5, 7, "next", "en", -0.9)]
+    assert [s["text"] for s in merge_passes([uk, en])] == ["Мм.", "sentence", "next"]
+
+
+def test_merge_does_not_repeat_a_stretch_for_a_more_confident_crossing_segment():
+    # "en 6-10" starts at the cursor, so 6-10 s has an offer. "uk 0-10" is more
+    # confident, but taking it prints 0-6 s a second time.
+    uk = [seg(0, 10, "uk 0-10", "uk", -0.35), seg(10, 15, "uk next", "uk", -0.2)]
+    en = [
+        seg(0, 6, "en 0-6", "en", -0.15),
+        seg(6, 10, "en 6-10", "en", -0.9),
+        seg(10, 15, "en next", "en", -0.9),
+    ]
+    assert [s["text"] for s in merge_passes([uk, en])] == ["en 0-6", "en 6-10", "uk next"]
+
+
+def test_merge_keeps_a_line_that_lost_to_shorter_lines():
+    # The cursor passes 0-2 s and 2.3-3 s of the sentence, but no line covers them.
+    uk = [seg(2, 2.3, "Мм.", "uk", -0.8), seg(3, 3.3, "Ага.", "uk", -0.8)]
+    en = [seg(0, 4, "sentence", "en", -0.9)]
+    assert [s["text"] for s in merge_passes([uk, en])] == ["Мм.", "Ага.", "sentence"]
 
 
 # --- language heuristic ------------------------------------------------------
