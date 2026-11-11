@@ -13,10 +13,13 @@ def extract_audio(
     """Write ``wav`` from ``video``, optionally only ``[start, start + duration)``."""
     need("ffmpeg")
     log("extracting audio")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(video), "-vn"]
+    # The range is cut after decoding. Before -i, -ss seeks by one stream, the video
+    # stream if there is one: a range that starts before the first frame of that
+    # stream then loses its audio.
     if start:
         cmd += ["-ss", f"{start:.3f}"]
     if duration is not None:
         cmd += ["-t", f"{duration:.3f}"]
-    cmd += ["-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)]
+    cmd += ["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)]
     run(cmd)
