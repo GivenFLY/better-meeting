@@ -122,3 +122,17 @@ def test_extract_audio_uses_one_stream_when_ffmpeg_cannot_make_the_mix(tmp_path,
     codec = data.rindex(b"A_PCM/INT/LIT")
     clip.write_bytes(data[:codec] + b"A_XXX" + data[codec + 5 :])
     assert 3900 < max(extract(clip)) < 4300
+
+
+def test_extract_audio_range_keeps_the_audio_before_the_first_video_frame(tmp_path, ffmpeg):
+    """A 2 s tone with a video that starts at 1 s, and the range is 0.2-0.7 s. With
+    -ss before -i, ffmpeg seeks to the first video frame and the range is empty."""
+    clip = tmp_path / "clip.mkv"
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    cmd += ["-t", "2", "-f", "lavfi", "-i", TONE]
+    cmd += ["-itsoffset", "1", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=10:d=2"]
+    cmd += ["-map", "0:a", "-map", "1:v", "-c:a", "pcm_s16le", "-pix_fmt", "yuv420p"]
+    subprocess.run([*cmd, str(clip)], check=True)
+    samples = extract(clip, start=0.2, duration=0.5)
+    assert len(samples) == 8000
+    assert max(samples) > 3900

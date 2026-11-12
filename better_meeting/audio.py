@@ -91,4 +91,7 @@ def extract_audio(
             # For example a stream that ffmpeg cannot decode, or an ffmpeg before 4.4,
             # which does not have normalize.
             log(f"could not mix the audio streams, one stream is used: {str(e).splitlines()[-1]}")
-    run([*cmd, *span, "-i", str(video), "-vn", *out])
+    # With one stream the range is also cut after decoding. Before -i, -ss seeks by
+    # one stream, the video stream if there is one: a range that starts before the
+    # first frame of that stream then loses its audio.
+    run([*cmd, "-i", str(video), "-vn", *span, *out])

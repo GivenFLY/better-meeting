@@ -18,6 +18,10 @@ All notable changes to this project are documented here. The format follows
   but the old screen was read: the new text was missing from the timeline until the
   next change, and the screenshot showed the old screen. Existing working folders
   keep their keyframes and frames: use `--force` to rebuild them.
+- `bm transcript` no longer loses the audio of a range that starts before the first
+  video frame. ffmpeg was told to seek before it opened the file, and it seeks by
+  the video stream. In a recording whose video starts later than its audio, such a
+  range came out empty or short.
 - `bm frame`, `bm ocr -t` and the frames stage now return the frame that was on
   screen at the timecode. Before, they returned the first frame at or after it. In a
   recording that has no frames while the screen is still, that is the next change.
