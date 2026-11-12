@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- `--lang auto` no longer prints a sentence twice when another pass's copy of it
+  ends less than 1 s later and most of that copy is already covered. It also no
+  longer drops a short line that is followed by a more confident line of the same
+  pass, or a line of 0.2 s or less. To re-merge an existing working folder, delete
+  its `transcript.json`: the cached passes are reused and ASR does not run again.
 - A keyframe's full frame now shows the screen that its thumbnail showed. Before,
   the thumbnail was taken up to half a `--frame-interval` after its timestamp and
   the full frame at the timestamp. A screen change between the two was detected,
@@ -20,6 +25,12 @@ All notable changes to this project are documented here. The format follows
 - `bm frame`, `bm ocr -t` and the frames stage now return the frame that was on
   screen at the timecode. Before, they returned the first frame at or after it. In a
   recording that has no frames while the screen is still, that is the next change.
+- A recording with more than one audio stream is now transcribed from all of
+  them, mixed. Before, only the stream that ffmpeg selects by default was used,
+  so a recording with the microphone and the system audio in separate streams
+  lost one side of the conversation. Each stream keeps the level it has alone
+  and its own start time, and a limiter turns the sum down where it would clip.
+  An existing `audio.wav` is kept: use `--force` to rebuild it.
 
 ## [0.4.1] - 2026-11-11
 
