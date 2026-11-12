@@ -52,7 +52,7 @@ wheels = [
 
 [[package]]
 name = "better-meeting"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "mlx-whisper", marker = "sys_platform == 'darwin'" },
