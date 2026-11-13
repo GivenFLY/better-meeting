@@ -13,9 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from ..asr import pipeline_meta
-from ..bundle import write_bundle
-from ..pipeline import run_pipeline
-from ..utils import log, need, probe_duration, run, save
+from ..pipeline import build_artifacts, run_pipeline
+from ..utils import FFMPEG, log, need, probe_duration, run, save, split_list
 
 #: H.264 codes a frame in blocks of this many pixels and crops the last ones.
 BLOCK = 16
@@ -38,11 +37,10 @@ def crop(video: Path, picture: tuple[int, int]) -> None:
     # The new cropping replaces the stream's own, so it counts from the coded size.
     right = -(-int(width) // BLOCK) * BLOCK - picture[0]
     bottom = -(-int(height) // BLOCK) * BLOCK - picture[1]
-    ffmpeg = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i"]
     marked, cropped = video.with_name("video_marked.mp4"), video.with_name("video_cropped.mp4")
     bsf = f"h264_metadata=crop_right={right}:crop_bottom={bottom}"
-    run([*ffmpeg, str(video), "-c", "copy", "-bsf:v", bsf, str(marked)])
-    run([*ffmpeg, str(marked), "-c", "copy", str(cropped)])
+    run([*FFMPEG, "-i", str(video), "-c", "copy", "-bsf:v", bsf, str(marked)])
+    run([*FFMPEG, "-i", str(marked), "-c", "copy", str(cropped)])
     marked.unlink()
     cropped.replace(video)
 
@@ -67,7 +65,7 @@ def shrink(recording: Path, bitrate: str | None, scale: float) -> None:
     filters.append("format=yuv420p")
     encoded = recording.with_name(recording.stem + ".encoding.mp4")
     log("encoding the video again")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(recording)]
+    cmd = [*FFMPEG, "-i", str(recording)]
     cmd += ["-map", "0", "-c:a", "copy", "-vf", ",".join(filters)]
     # The capture skips frames while nothing changes: keep their times as they are.
     cmd += ["-fps_mode", "passthrough", *codec, "-movflags", "+faststart", str(encoded)]
@@ -95,7 +93,7 @@ def mux(
     if has_video and picture is not None:
         crop(video, picture)
     out = dest.with_suffix(".mp4" if has_video else ".m4a")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    cmd = list(FFMPEG)
     inputs = [video, *wavs] if has_video else wavs
     for path in inputs:
         cmd += ["-i", str(path)]
@@ -103,13 +101,8 @@ def mux(
     if has_video:
         cmd += ["-map", "0:v", "-c:v", "copy"]
     for i, track in enumerate(tracks):
-        cmd += ["-map", f"{first + i}:a"]
-        cmd += [
-            f"-metadata:s:a:{i}",
-            f"title={track}",
-            f"-metadata:s:a:{i}",
-            f"handler_name={track}",
-        ]
+        name = f"-metadata:s:a:{i}"
+        cmd += ["-map", f"{first + i}:a", name, f"title={track}", name, f"handler_name={track}"]
     cmd += ["-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(out)]
     log(f"writing the recording: {out}")
     run(cmd)
@@ -127,27 +120,13 @@ def finish(
     ``a`` is an ``extract`` namespace for ``recording`` whose ASR parameters are
     the ones the session ran with, so the stored transcript counts as up to date.
     """
-    langs = [code.strip() for code in a.langs.split(",") if code.strip()]
+    meta = pipeline_meta(a.lang, split_list(a.langs), a.asr_model, a.asr_backend, a.asr_opts)
     save(work / "transcript.json", transcript)
-    save(
-        work / "transcript.meta.json",
-        pipeline_meta(a.lang, langs, a.asr_model, a.asr_backend, a.asr_opts),
-    )
+    save(work / "transcript.meta.json", meta)
     if recording.suffix == ".mp4":
         run_pipeline(a)
         return
     # Microphone only: there is no picture, so no frames and no OCR.
     a.only = "transcribe"
     run_pipeline(a)
-    write_bundle(
-        work / "artifacts",
-        transcript,
-        [],
-        [],
-        probe_duration(recording),
-        max_shots=a.max_shots,
-        shot_width=a.shot_width,
-        shot_quality=a.shot_quality,
-        draw_label=not a.no_label,
-        pause=a.pause,
-    )
+    build_artifacts(a, transcript, [], [], probe_duration(recording))

@@ -414,11 +414,43 @@ def _ask(title: str, options: list[str]) -> int:
             return int(answer) - 1
 
 
+def _check_video_options(a: argparse.Namespace) -> None:
+    if not 1 <= a.fps <= 60:
+        raise BmError(f"--fps must be between 1 and 60, not {a.fps}")
+    if not 0 < a.scale <= 1:
+        raise BmError(f"--scale must be above 0 and at most 1, not {a.scale:g}")
+    if a.video_bitrate and not re.fullmatch(r"\d+(\.\d+)?[kKmM]?", a.video_bitrate):
+        raise BmError(f"--video-bitrate must look like 2M or 800k, not {a.video_bitrate!r}")
+
+
+def _pick_window(windows: list[Any], needle: str | None) -> Any:
+    """The one window whose application or title contains ``needle``, or the user's choice."""
+
+    def label(w: Any) -> str:
+        return f"{w.app} — {w.title}"
+
+    if needle is not None:
+        windows = [w for w in windows if needle.casefold() in f"{w.app} {w.title}".casefold()]
+        if len(windows) > 1:
+            found = "; ".join(label(w) for w in windows[:8])
+            raise BmError(f"--window {needle!r} matches {len(windows)} windows: {found}")
+    if not windows:
+        raise BmError("no window to capture" + (f" matches {needle!r}" if needle else ""))
+    pick = 0 if needle is not None else _ask("Which window?", [label(w) for w in windows])
+    log(f"window: {label(windows[pick])}")
+    return windows[pick]
+
+
 def cmd_live(a: argparse.Namespace) -> None:
     from datetime import datetime
 
-    from . import live
     from .asr import resolve
+
+    try:
+        from . import live
+    except ImportError as e:
+        hint = '`pip install "better-meeting[live]"`'
+        raise BmError(f"`bm live` needs {e.name}, which is not installed: {hint}") from None
 
     capture = live.get_capture(a.capture)
     if a.list_windows:
@@ -430,12 +462,7 @@ def cmd_live(a: argparse.Namespace) -> None:
     backend, model = resolve(asr_name, a.asr_model)
     opts = parse_opts(a.opt)
     backend.check_options(opts)
-    if not 1 <= a.fps <= 60:
-        raise BmError(f"--fps must be between 1 and 60, not {a.fps}")
-    if not 0 < a.scale <= 1:
-        raise BmError(f"--scale must be above 0 and at most 1, not {a.scale:g}")
-    if a.video_bitrate and not re.fullmatch(r"\d+(\.\d+)?[kKmM]?", a.video_bitrate):
-        raise BmError(f"--video-bitrate must look like 2M or 800k, not {a.video_bitrate!r}")
+    _check_video_options(a)
     capture.fps = a.fps
     name = a.name or datetime.now().strftime("live-%Y%m%d-%H%M%S")
     work = a.out_root / name
@@ -445,24 +472,7 @@ def cmd_live(a: argparse.Namespace) -> None:
     sources = list(live.SOURCES)
     source = a.source or sources[_ask("What to listen to?", sources)]
     tracks = live.SOURCES[source]
-    window = None
-    if "app" in tracks:
-        windows = capture.windows()
-        if a.window is not None:
-            needle = a.window.casefold()
-            windows = [w for w in windows if needle in f"{w.app} {w.title}".casefold()]
-            if len(windows) > 1:
-                found = "; ".join(f"{w.app} — {w.title}" for w in windows[:8])
-                raise BmError(f"--window {a.window!r} matches {len(windows)} windows: {found}")
-        if not windows:
-            raise BmError("no window to capture" + (f" matches {a.window!r}" if a.window else ""))
-        pick = (
-            0
-            if a.window is not None
-            else _ask("Which window?", [f"{w.app} — {w.title}" for w in windows])
-        )
-        window = windows[pick]
-        log(f"window: {window.app} — {window.title}")
+    window = _pick_window(capture.windows(), a.window) if "app" in tracks else None
     if not backend.single_pass and a.lang == "auto":
         log(
             f"{backend.name} decodes each utterance in one language; pass --lang if the "
@@ -480,12 +490,10 @@ def cmd_live(a: argparse.Namespace) -> None:
     transcript = live.run_session(capture, window, tracks, work, backend, model, options)
     recording = live.mux(work, tracks, a.out_root / name, capture.picture)
 
-    argv = ["extract", str(recording), "--out", str(work), "--lang", a.lang, "--ocr", a.ocr]
-    argv += ["--asr-backend", backend.name, "--asr-model", model]
-    for kv in a.opt:
-        argv += ["-O", kv]
-    ns = build_parser().parse_args(argv)
-    ns.asr_opts = opts
+    # The artifacts are built as `bm extract` builds them, around the live transcript.
+    ns = build_parser().parse_args(["extract", str(recording)])
+    vars(ns).update(out=work, lang=a.lang, ocr=a.ocr, asr_opts=opts)
+    vars(ns).update(asr_backend=backend.name, asr_model=model)
     live.finish(recording, work, transcript, ns)
     live.shrink(recording, a.video_bitrate, a.scale)
     log(f"recording: {recording}")

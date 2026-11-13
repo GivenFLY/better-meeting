@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+import numpy as np
+
 from ..asr import AsrBackend
 from ..asr.core import is_hallucination, public
 from ..utils import log, ts
@@ -42,8 +44,6 @@ def leveled(samples: Any) -> Any:
     A microphone is captured without the automatic gain that call applications
     add, and quiet speech makes a multilingual model guess the wrong language.
     """
-    import numpy as np
-
     rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float64)))) if len(samples) else 0.0
     gain = min(MAX_GAIN, LEVEL / rms) if rms > 0 else 1.0
     return samples if gain <= 1.0 else np.clip(samples * gain, -1.0, 1.0)
@@ -70,8 +70,6 @@ class TrackWriter:
         self._written = 0
 
     def write(self, t: float, samples: Any) -> None:
-        import numpy as np
-
         gap = round(t * RATE) - self._written
         if gap > RATE // 10:  # the source skipped silence: keep the track on the clock
             self._wav.writeframes(bytes(2 * gap))
@@ -150,6 +148,146 @@ def _stop_on_signals() -> Any:
     return lambda: [signal.signal(sig, handler) for sig, handler in old.items()]
 
 
+class _Session:
+    """The state of one live session: queued audio, open utterances, the transcript."""
+
+    def __init__(
+        self,
+        tracks: tuple[str, ...],
+        work: Path,
+        backend: AsrBackend,
+        model: str,
+        options: LiveOptions,
+        console: Console,
+    ) -> None:
+        self._tracks = tracks
+        self._work = work
+        self._backend, self._model, self._options = backend, model, options
+        self._console = console
+        self._audio: queue.Queue[tuple[str, float, Any]] = queue.Queue()
+        self._segmenters = {t: Segmenter(options.silence, options.max_len) for t in tracks}
+        self._writers = {t: TrackWriter(work / f"track_{t}.wav") for t in tracks}
+        self._clip = work / "live_utterance.wav"
+        self._pending: list[tuple[str, Utterance]] = []  # closed utterances, not decoded yet
+        self._drafted = dict.fromkeys(tracks, 0.0)  # length of the open utterance at its draft
+        # With both tracks the microphone may hear the application through speakers.
+        self._echo = EchoFilter() if len(tracks) > 1 else None
+        self.transcript: list[dict[str, Any]] = []
+
+    def run(self, capture: Capture, window: Window | None) -> None:
+        """Capture until Ctrl+C or until the capture ends, then decode what is left."""
+        try:
+            log("loading the ASR model")  # before the capture starts: the first line is not late
+            self._decode(Utterance(0.0, 1.0, np.zeros(RATE, dtype=np.float32)))
+            capture.start(
+                window, self._tracks, self._work / "video.mp4", lambda *b: self._audio.put(b)
+            )
+            log("listening; Ctrl+C stops the session")
+            restore = _stop_on_signals()
+            try:
+                self._loop(capture)
+            except KeyboardInterrupt:
+                self._console.clear()
+                log("stopping")
+            finally:
+                capture.stop()
+                self._drain()
+                restore()
+        finally:
+            self._console.clear()
+            for writer in self._writers.values():
+                writer.close()
+            self._clip.unlink(missing_ok=True)
+
+    def _loop(self, capture: Capture) -> None:
+        while not (capture.finished.is_set() and self._audio.empty() and not self._pending):
+            self._take(block=not self._pending)
+            if self._pending:
+                self._finish(*self._pending.pop(0))
+            elif self._options.draft:
+                self._draft()
+
+    def _drain(self) -> None:
+        """Decode everything that was captured before the capture stopped."""
+        while self._take(block=False):
+            pass
+        for track in self._tracks:
+            self._pending.extend((track, u) for u in self._segmenters[track].flush())
+        for track, utt in sorted(self._pending, key=lambda p: p[1].start):
+            self._finish(track, utt)
+        self._pending.clear()
+
+    def _take(self, block: bool) -> bool:
+        """Move queued audio into the writers and segmenters. False if nothing was queued."""
+        try:
+            item = self._audio.get(timeout=0.2) if block else self._audio.get_nowait()
+        except queue.Empty:
+            return False
+        while True:
+            track, t, samples = item
+            self._writers[track].write(t, samples)
+            if self._echo:
+                (self._echo.heard if track == "mic" else self._echo.played)(t, samples)
+            self._pending.extend((track, u) for u in self._segmenters[track].feed(samples, t))
+            try:
+                item = self._audio.get_nowait()
+            except queue.Empty:
+                return True
+
+    def _own(self, track: str, utt: Utterance) -> Utterance | None:
+        """``utt`` without the application's echo; ``None`` if nothing else is in it."""
+        return self._echo.user_part(utt) if self._echo and track == "mic" else utt
+
+    def _decode(self, utt: Utterance, again: bool = True) -> list[dict[str, Any]]:
+        write_wav(self._clip, leveled(utt.samples))
+        raw = self._backend.transcribe(
+            self._clip, self._options.lang, self._model, self._options.opts
+        )
+        segs: list[dict[str, Any]] = [
+            {**public(s), "start": s["start"] + utt.start, "end": s["end"] + utt.start}
+            for s in raw
+            if not is_hallucination(s)
+        ]
+        if not again:
+            return segs
+        # A provider can skip a whole sentence, for example where the language
+        # changes without a pause. A stretch of speech that no segment covers is
+        # decoded once more on its own.
+        edges: list[float] = [
+            utt.start,
+            *(t for s in segs for t in (s["start"], s["end"])),
+            utt.end,
+        ]
+        for a, b in zip(edges[::2], edges[1::2], strict=True):
+            if utt.speech_seconds(a, b) >= UNCOVERED_S:
+                segs += self._decode(utt.cut(a - 0.2, b + 0.2), again=False)
+        return sorted(segs, key=lambda s: s["start"])
+
+    def _finish(self, track: str, utt: Utterance) -> None:
+        """Decode a closed utterance and print its lines."""
+        self._drafted[track] = 0.0
+        mine = self._own(track, utt)
+        for seg in self._decode(mine) if mine else []:
+            seg["track"] = track
+            self.transcript.append(seg)
+            self._console.final(seg)
+
+    def _draft(self) -> None:
+        """Show the first open utterance that grew by DRAFT_STEP_S since its last draft."""
+        for track in self._tracks:
+            utt = self._segmenters[track].open()
+            if utt is None:
+                self._drafted[track] = 0.0
+            elif utt.end - utt.start - self._drafted[track] >= DRAFT_STEP_S:
+                self._drafted[track] = utt.end - utt.start
+                mine = self._own(track, utt)
+                if mine is None:
+                    continue
+                text = " ".join(s["text"] for s in self._decode(mine, again=False))
+                self._console.draft(mine.start, track, text)
+                return
+
+
 def run_session(
     capture: Capture,
     window: Window | None,
@@ -167,106 +305,7 @@ def run_session(
     (if a window is captured) and ``track_<name>.wav`` for every track.
     """
     tracks = tuple(t for t in TRACKS if t in tracks)
-    audio: queue.Queue[tuple[str, float, Any]] = queue.Queue()
-    segmenters = {t: Segmenter(options.silence, options.max_len) for t in tracks}
-    writers = {t: TrackWriter(work / f"track_{t}.wav") for t in tracks}
     console = Console(out or sys.stdout, err or sys.stderr, show_track=len(tracks) > 1)
-    clip = work / "live_utterance.wav"
-    pending: list[tuple[str, Utterance]] = []
-    drafted = dict.fromkeys(tracks, 0.0)  # length of the open utterance at its last draft
-    transcript: list[dict[str, Any]] = []
-    # With both tracks the microphone may hear the application through speakers.
-    echo = EchoFilter() if len(tracks) > 1 else None
-
-    def own(track: str, utt: Utterance) -> Utterance | None:
-        """``utt`` without the application's echo; ``None`` if nothing else is in it."""
-        return echo.user_part(utt) if echo and track == "mic" else utt
-
-    def decode(utt: Utterance, again: bool = True) -> list[dict[str, Any]]:
-        write_wav(clip, leveled(utt.samples))
-        raw = backend.transcribe(clip, options.lang, model, options.opts)
-        segs = [
-            {**public(s), "start": s["start"] + utt.start, "end": s["end"] + utt.start}
-            for s in raw
-            if not is_hallucination(s)
-        ]
-        if not again:
-            return segs
-        # A provider can skip a whole sentence, for example where the language
-        # changes without a pause. A stretch of speech that no segment covers is
-        # decoded once more on its own.
-        edges = [utt.start, *(t for s in segs for t in (s["start"], s["end"])), utt.end]
-        for a, b in zip(edges[::2], edges[1::2], strict=True):
-            if utt.speech_seconds(a, b) >= UNCOVERED_S:
-                segs += decode(utt.cut(a - 0.2, b + 0.2), again=False)
-        return sorted(segs, key=lambda s: s["start"])
-
-    def take(block: bool) -> bool:
-        """Move queued audio into the writers and segmenters. False if nothing was queued."""
-        try:
-            item = audio.get(timeout=0.2) if block else audio.get_nowait()
-        except queue.Empty:
-            return False
-        while True:
-            track, t, samples = item
-            writers[track].write(t, samples)
-            if echo:
-                (echo.heard if track == "mic" else echo.played)(t, samples)
-            pending.extend((track, u) for u in segmenters[track].feed(samples, t))
-            try:
-                item = audio.get_nowait()
-            except queue.Empty:
-                return True
-
-    def finish(track: str, utt: Utterance) -> None:
-        drafted[track] = 0.0
-        mine = own(track, utt)
-        for seg in decode(mine) if mine else []:
-            seg["track"] = track
-            transcript.append(seg)
-            console.final(seg)
-
-    import numpy as np
-
-    log("loading the ASR model")  # before the capture starts, so the first line is not late
-    decode(Utterance(0.0, 1.0, np.zeros(RATE, dtype=np.float32)))
-    capture.start(window, tracks, work / "video.mp4", lambda *block: audio.put(block))
-    log("listening; Ctrl+C stops the session")
-    restore = _stop_on_signals()
-    try:
-        while not (capture.finished.is_set() and audio.empty() and not pending):
-            take(block=not pending)
-            if pending:
-                finish(*pending.pop(0))
-                continue
-            if not options.draft:
-                continue
-            for track in tracks:
-                utt = segmenters[track].open()
-                if utt is None:
-                    drafted[track] = 0.0
-                elif utt.end - utt.start - drafted[track] >= DRAFT_STEP_S:
-                    drafted[track] = utt.end - utt.start
-                    mine = own(track, utt)
-                    if mine is None:
-                        continue
-                    text = " ".join(s["text"] for s in decode(mine, again=False))
-                    console.draft(mine.start, track, text)
-                    break
-    except KeyboardInterrupt:
-        console.clear()
-        log("stopping")
-    finally:
-        capture.stop()
-        while take(block=False):
-            pass
-        for track in tracks:
-            pending.extend((track, u) for u in segmenters[track].flush())
-        for track, utt in sorted(pending, key=lambda p: p[1].start):
-            finish(track, utt)
-        console.clear()
-        for writer in writers.values():
-            writer.close()
-        clip.unlink(missing_ok=True)
-        restore()
-    return sorted(transcript, key=lambda s: (s["start"], s["end"]))
+    session = _Session(tracks, work, backend, model, options, console)
+    session.run(capture, window)
+    return sorted(session.transcript, key=lambda s: (s["start"], s["end"]))

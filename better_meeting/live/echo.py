@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+import numpy as np
+
 from .segmenter import FRAME_S, RATE, Utterance
 
 #: The speakers' sound arrives and dies away within this many seconds.
@@ -39,8 +41,6 @@ def _frames(samples: Any, tail: bool = False) -> list[float]:
 
     A capture block can be shorter than a frame, so a block's tail must count.
     """
-    import numpy as np
-
     n = round(FRAME_S * RATE)
     data = np.asarray(samples, dtype=np.float32)
     stop = len(data) if tail else len(data) // n * n

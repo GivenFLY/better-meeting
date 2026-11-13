@@ -16,6 +16,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 RATE = 16000
 FRAME_S = 0.03
 #: A forced cut looks for the quietest frame in this many trailing seconds.
@@ -65,9 +67,6 @@ class Segmenter:
         min_speech: float = 0.25,
         floor: float = 0.004,
     ) -> None:
-        import numpy as np
-
-        self._np = np
         self._n = round(FRAME_S * RATE)
         self._silence = max(1, round(silence / FRAME_S))
         self._max = max(self._silence + 1, round(max_len / FRAME_S))
@@ -90,7 +89,6 @@ class Segmenter:
         A source that skips silence leaves gaps between its blocks. A gap closes
         the open utterance and moves the clock forward.
         """
-        np = self._np
         out: list[Utterance] = []
         if t is not None:
             now = (self._pos * self._n + len(self._rest)) / RATE
@@ -120,7 +118,7 @@ class Segmenter:
         return self._utterance(len(self._buf))
 
     def _frame(self, frame: Any) -> Utterance | None:
-        rms = float(self._np.sqrt(self._np.mean(frame * frame)))
+        rms = float(np.sqrt(np.mean(frame * frame)))
         speech = rms > max(self._floor, 3.0 * self._noise)
         if not speech:
             self._noise = 0.95 * self._noise + 0.05 * rms
@@ -153,7 +151,7 @@ class Segmenter:
         return Utterance(
             start,
             start + n * FRAME_S,
-            self._np.concatenate(self._buf[:n]),
+            np.concatenate(self._buf[:n]),
             tuple(self._speech[:n]),
         )
 

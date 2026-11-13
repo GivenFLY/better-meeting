@@ -17,6 +17,8 @@ import threading
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import numpy as np
+
 from better_meeting.live.segmenter import RATE
 from better_meeting.utils import BmError, log
 
@@ -44,7 +46,8 @@ FLAG_FLOAT, FLAG_NON_INTERLEAVED = 1, 32  # kAudioFormatFlagIsFloat, ...IsNonInt
 
 def _wait(start: Any, what: str, seconds: float = WAIT_S) -> Any:
     """Call ``start(handler)`` and wait for the handler's ``(value, error)`` or ``(error,)``."""
-    done, box = threading.Event(), []
+    done = threading.Event()
+    box: list[Any] = []
 
     def handler(*args: Any) -> None:
         box.extend(args)
@@ -83,9 +86,6 @@ class _Resampler:
     """
 
     def __init__(self, rate: float) -> None:
-        import numpy as np
-
-        self._np = np
         self._rate = rate
         factor = rate / RATE
         self._factor = round(factor) if factor > 1 and abs(factor - round(factor)) < 1e-6 else 0
@@ -97,7 +97,6 @@ class _Resampler:
             self._seen = 0  # input samples so far: output samples sit at multiples of the factor
 
     def __call__(self, data: Any) -> Any:
-        np = self._np
         if self._rate == RATE or not len(data):
             return data
         if not self._factor:  # an unusual rate: plain interpolation
@@ -112,8 +111,6 @@ class _Resampler:
 
 def _samples(buffer: Any) -> tuple[Any, float]:
     """The audio of a sample buffer as mono float32, and its sample rate."""
-    import numpy as np
-
     desc = CM.CMAudioFormatDescriptionGetStreamBasicDescription(
         CM.CMSampleBufferGetFormatDescription(buffer)
     )
