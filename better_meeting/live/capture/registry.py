@@ -6,7 +6,8 @@ import importlib
 import platform
 from collections.abc import Callable
 
-from ...utils import BmError
+from better_meeting.utils import BmError
+
 from .base import Capture
 
 Factory = Callable[[], Capture]

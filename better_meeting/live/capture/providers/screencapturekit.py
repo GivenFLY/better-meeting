@@ -17,8 +17,9 @@ import threading
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from ....utils import BmError, log
-from ...segmenter import RATE
+from better_meeting.live.segmenter import RATE
+from better_meeting.utils import BmError, log
+
 from ..base import AudioHandler, Capture, Window
 
 try:
