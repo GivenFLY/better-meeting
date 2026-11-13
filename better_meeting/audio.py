@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-from .utils import BmError, log, need, run
+from .utils import FFMPEG, BmError, log, need, run
 
 
-def _seconds(value: object) -> float:
+def _seconds(value: Any) -> float:
     try:
         return float(value)  # ffprobe writes "N/A" when it does not know
     except (TypeError, ValueError):
@@ -18,20 +19,8 @@ def _seconds(value: object) -> float:
 def _audio_stream_starts(video: Path) -> list[float]:
     """For each audio stream, the seconds from the start of the file to its first sample."""
     need("ffprobe")
-    res = run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=start_time:format=start_time",
-            "-of",
-            "json",
-            str(video),
-        ]
-    )
+    show = ["-select_streams", "a", "-show_entries", "stream=start_time:format=start_time"]
+    res = run(["ffprobe", "-v", "error", *show, "-of", "json", str(video)])
     info = json.loads(res.stdout)
     file_start = _seconds(info.get("format", {}).get("start_time"))
     return [max(0.0, _seconds(s.get("start_time")) - file_start) for s in info.get("streams", [])]
@@ -53,7 +42,6 @@ def extract_audio(
     """
     need("ffmpeg")
     log("extracting audio")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     span = ["-ss", f"{start:.3f}"] if start else []
     if duration is not None:
         span += ["-t", f"{duration:.3f}"]
@@ -85,7 +73,7 @@ def extract_audio(
         # And without -ss, -t counts from the start of each stream.
         mixed = ["-i", str(video), "-vn", "-filter_complex", graph, "-map", "[mix]", *span]
         try:
-            run([*cmd, *mixed, *out])
+            run([*FFMPEG, *mixed, *out])
             return
         except BmError as e:
             # For example a stream that ffmpeg cannot decode, or an ffmpeg before 4.4,
@@ -94,4 +82,4 @@ def extract_audio(
     # With one stream the range is also cut after decoding. Before -i, -ss seeks by
     # one stream, the video stream if there is one: a range that starts before the
     # first frame of that stream then loses its audio.
-    run([*cmd, "-i", str(video), "-vn", *span, *out])
+    run([*FFMPEG, "-i", str(video), "-vn", *span, *out])

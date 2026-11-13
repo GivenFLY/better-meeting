@@ -10,10 +10,10 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from ...utils import BmError
-from ..base import AsrBackend, RawSegment
+from better_meeting.utils import BmError
+
+from ..base import WHISPER_MODEL, AsrBackend, RawSegment
 from ..langid import label_segments
-from .mlx_whisper import WHISPER_MODEL
 
 PARAKEET_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 

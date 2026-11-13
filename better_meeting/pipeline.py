@@ -17,7 +17,7 @@ from .audio import extract_audio
 from .bundle import write_bundle
 from .frames import extract_full_frames, pick_keyframes, sample_thumbs
 from .ocr import ocr_frames
-from .utils import BmError, load, log, probe_duration, save
+from .utils import BmError, load, log, probe_duration, save, split_list
 
 
 def _stale(out: Path, meta_file: Path, params: dict[str, Any], force: bool) -> bool:
@@ -52,7 +52,7 @@ def run_pipeline(a: argparse.Namespace) -> None:
     duration = probe_duration(a.video)
 
     # 2. transcribe
-    langs = [code.strip() for code in a.langs.split(",") if code.strip()]
+    langs = split_list(a.langs)
     backend, model = resolve(a.asr_backend, a.asr_model)
     meta = pipeline_meta(a.lang, langs, model, backend.name, a.asr_opts)
     if _stale(f_transcript, work / "transcript.meta.json", meta, a.force):
@@ -99,15 +99,26 @@ def run_pipeline(a: argparse.Namespace) -> None:
     else:
         ocr_params = {"backend": a.ocr, "langs": a.ocr_lang, "sim": a.ocr_sim}
         if frames_dirty or _stale(f_screen, work / "screen.meta.json", ocr_params, a.force):
-            save(f_screen, ocr_frames(frames, a.ocr, a.ocr_lang.split(","), a.ocr_sim))
+            save(f_screen, ocr_frames(frames, a.ocr, split_list(a.ocr_lang), a.ocr_sim))
             save(work / "screen.meta.json", ocr_params)
         screen = load(f_screen)
     if a.only == "ocr":
         return
 
     # 5. bundle (cheap, always rebuilt)
+    build_artifacts(a, transcript, screen, frames, duration)
+
+
+def build_artifacts(
+    a: argparse.Namespace,
+    transcript: list[dict[str, Any]],
+    screen: list[dict[str, Any]],
+    frames: list[dict[str, Any]],
+    duration: float,
+) -> None:
+    """Write ``artifacts/`` in the working folder with the screenshot options of ``a``."""
     write_bundle(
-        work / "artifacts",
+        a.out / "artifacts",
         transcript,
         screen,
         frames,

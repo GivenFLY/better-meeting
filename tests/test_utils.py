@@ -2,7 +2,7 @@ import sys
 
 import pytest
 
-from better_meeting.utils import BmError, parse_ts, run, ts, ts_file
+from better_meeting.utils import BmError, parse_ts, run, split_list, ts, ts_file
 
 
 @pytest.mark.parametrize(
@@ -38,6 +38,11 @@ def test_parse_ts(text, seconds):
 def test_parse_ts_rejects_garbage(bad):
     with pytest.raises(BmError, match="timecode"):
         parse_ts(bad)
+
+
+def test_split_list_drops_spaces_and_empty_items():
+    assert split_list("uk, ru,,en ") == ["uk", "ru", "en"]
+    assert split_list("") == []
 
 
 def test_run_raises_with_stderr_tail():

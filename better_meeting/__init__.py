@@ -13,6 +13,7 @@ Modules, in pipeline order:
   pipeline   stage glue with per-stage caching in the video's working folder
   live       ``bm live``: capture providers, pause segmenter, live session
   cli        argument parsing and ``main()``
+  registry   named providers, imported on first use (shared by asr and ocr)
   utils      timecodes, logging, subprocess, JSON helpers
 """
 

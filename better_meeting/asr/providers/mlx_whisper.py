@@ -5,10 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ...utils import BmError
-from ..base import AsrBackend, RawSegment
+from better_meeting.utils import BmError
 
-WHISPER_MODEL = "large-v3-turbo"
+from ..base import WHISPER_MODEL, AsrBackend, RawSegment
 
 
 class MlxWhisperBackend(AsrBackend):

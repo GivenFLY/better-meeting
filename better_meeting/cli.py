@@ -28,10 +28,9 @@ from . import __version__
 from .asr import backend_names as asr_backend_names
 from .ocr import backend_names as ocr_backend_names
 from .ocr import default_backend_name as default_ocr_backend
-from .utils import BmError, log, parse_ts, setup_logging, ts, ts_file
+from .utils import BmError, log, parse_ts, setup_logging, split_list, ts, ts_file
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"}
-COMMANDS = {"extract", "frame", "ocr", "transcript", "live", "agents"}
 STAGES = ["audio", "transcribe", "frames", "ocr", "bundle"]
 DEFAULT_OCR_LANGS = "en-US,uk-UA"
 ASR_MODEL_HELP = (
@@ -502,7 +501,7 @@ def cmd_ocr(a: argparse.Namespace) -> None:
         if a.at is None:
             raise BmError("a video needs a timecode: --at MM:SS")
         path = _grab_at(a.target, a.at, None, a.out_root, a.width)
-    print(get_backend(a.backend).recognize(str(path), a.lang.split(",")))
+    print(get_backend(a.backend).recognize(str(path), split_list(a.lang)))
 
 
 HANDLERS = {
@@ -523,7 +522,7 @@ def normalize_argv(argv: list[str]) -> list[str]:
     i = 0
     while i < len(argv) and argv[i] in ("-q", "--quiet", "-v", "--verbose"):
         i += 1
-    if i < len(argv) and argv[i] not in COMMANDS and not argv[i].startswith("-"):
+    if i < len(argv) and argv[i] not in HANDLERS and not argv[i].startswith("-"):
         return [*argv[:i], "extract", *argv[i:]]
     return argv
 
