@@ -1,59 +1,45 @@
-"""ASR provider registry.
-
-Providers register under a name; the module behind a built-in provider is only
-imported when that provider is first used, so optional dependencies stay optional.
-"""
+"""ASR provider registry."""
 
 from __future__ import annotations
 
-import importlib
 import platform
 from collections.abc import Callable
 
-from ..utils import BmError
+from ..registry import Registry
 from .base import AsrBackend
 
-Factory = Callable[[], AsrBackend]
+_BACKENDS: Registry[AsrBackend] = Registry(
+    "ASR backend",
+    {
+        "mlx": "better_meeting.asr.providers.mlx_whisper:MlxWhisperBackend",
+        "faster": "better_meeting.asr.providers.faster_whisper:FasterWhisperBackend",
+        "parakeet": "better_meeting.asr.providers.parakeet:ParakeetBackend",
+    },
+)
 
-_FACTORIES: dict[str, Factory | str] = {
-    "mlx": "better_meeting.asr.providers.mlx_whisper:MlxWhisperBackend",
-    "faster": "better_meeting.asr.providers.faster_whisper:FasterWhisperBackend",
-    "parakeet": "better_meeting.asr.providers.parakeet:ParakeetBackend",
-}
-_INSTANCES: dict[str, AsrBackend] = {}
 
-
-def register_backend(name: str, factory: Factory | str) -> None:
+def register_backend(name: str, factory: Callable[[], AsrBackend] | str) -> None:
     """Add or replace a provider.
 
     ``factory`` is a zero-argument callable returning an :class:`AsrBackend`, or a
     ``"package.module:ClassName"`` string imported lazily on first use.
     """
-    _FACTORIES[name] = factory
-    _INSTANCES.pop(name, None)
+    _BACKENDS.register(name, factory)
 
 
 def backend_names() -> list[str]:
     """Names accepted by ``--asr-backend`` (plus ``auto``)."""
-    return list(_FACTORIES)
+    return _BACKENDS.names()
 
 
 def resolve_backend_name(name: str) -> str:
     """``auto`` -> the platform default: mlx-whisper on macOS, faster-whisper elsewhere."""
     if name == "auto":
         return "mlx" if platform.system() == "Darwin" else "faster"
-    if name not in _FACTORIES:
-        raise BmError(f"unknown ASR backend {name!r}; available: {', '.join(_FACTORIES)}")
+    _BACKENDS.check(name)
     return name
 
 
 def get_backend(name: str) -> AsrBackend:
     """The (cached) provider instance for ``name``; ``auto`` is resolved first."""
-    name = resolve_backend_name(name)
-    if name not in _INSTANCES:
-        factory = _FACTORIES[name]
-        if isinstance(factory, str):
-            module, _, attr = factory.partition(":")
-            factory = getattr(importlib.import_module(module), attr)
-        _INSTANCES[name] = factory()
-    return _INSTANCES[name]
+    return _BACKENDS.get(resolve_backend_name(name))

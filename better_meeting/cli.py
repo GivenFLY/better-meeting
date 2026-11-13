@@ -6,6 +6,8 @@ Subcommands:
   ocr         point query: OCR a video frame at a timecode, or an existing image
   transcript  point query: transcript of a ``--from``..``--to`` range, with any
               Whisper option passed through (``-O key=value``); cached by parameters
+  live        capture a window and/or the microphone, print the transcript while
+              the meeting runs, then build the same artifacts as ``extract``
   agents      print AGENTS.md, the guide for an LLM agent driving ``bm``
 
 Point queries print data to stdout and logs to stderr, so an agent can capture
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,10 +28,9 @@ from . import __version__
 from .asr import backend_names as asr_backend_names
 from .ocr import backend_names as ocr_backend_names
 from .ocr import default_backend_name as default_ocr_backend
-from .utils import BmError, parse_ts, setup_logging, ts, ts_file
+from .utils import BmError, log, parse_ts, setup_logging, split_list, ts, ts_file
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".bmp"}
-COMMANDS = {"extract", "frame", "ocr", "transcript", "agents"}
 STAGES = ["audio", "transcribe", "frames", "ocr", "bundle"]
 DEFAULT_OCR_LANGS = "en-US,uk-UA"
 ASR_MODEL_HELP = (
@@ -169,6 +171,87 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument(
         "--no-label", action="store_true", help="do not stamp the timecode on screenshots"
+    )
+
+    # live
+    pl = sub.add_parser(
+        "live",
+        help="transcribe a meeting while it runs (window and/or microphone), then extract",
+    )
+    pl.add_argument(
+        "--source",
+        choices=["app", "app+mic", "mic"],
+        default=None,
+        help="what to listen to: the window's application, the microphone, or both "
+        "as separate tracks (default: ask)",
+    )
+    pl.add_argument(
+        "--window",
+        default=None,
+        metavar="TEXT",
+        help="capture the window, or the screen ('display 1'), whose application or title "
+        "contains TEXT (default: ask)",
+    )
+    pl.add_argument(
+        "--list-windows",
+        action="store_true",
+        help="print the capturable screens and windows and exit",
+    )
+    pl.add_argument(
+        "--name", default=None, help="name of the recording (default: live-<date>-<time>)"
+    )
+    pl.add_argument("--out-root", type=Path, default=Path("runs"))
+    pl.add_argument(
+        "--lang",
+        default="auto",
+        help="pin one language (uk/ru/en/...); auto = the ASR backend detects it "
+        "for every utterance (default: auto)",
+    )
+    _add_asr_args(pl)
+    pl.add_argument(
+        "--silence",
+        type=float,
+        default=0.6,
+        help="a pause this long (s) ends an utterance and makes its line final (default: 0.6)",
+    )
+    pl.add_argument(
+        "--max-utterance",
+        type=float,
+        default=20.0,
+        help="cut an utterance without pauses after this many seconds (default: 20)",
+    )
+    pl.add_argument(
+        "--no-draft", action="store_true", help="print only final lines, no live draft line"
+    )
+    pl.add_argument(
+        "--fps",
+        type=int,
+        default=10,
+        help="record at most this many frames per second (default: 10)",
+    )
+    pl.add_argument(
+        "--video-bitrate",
+        default=None,
+        metavar="RATE",
+        help="encode the saved video again at this bitrate, e.g. 2M or 800k; the artifacts "
+        "are built before that (default: keep what the capture wrote)",
+    )
+    pl.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        metavar="FACTOR",
+        help="shrink the saved video, e.g. 0.5 halves its width and height; the artifacts "
+        "are built before that (default: 1)",
+    )
+    pl.add_argument(
+        "--ocr",
+        default=default_ocr_backend(),
+        choices=[*ocr_backend_names(), "none"],
+        help="OCR backend for the artifacts built after the session",
+    )
+    pl.add_argument(
+        "--capture", default="auto", help="capture provider (default: auto = ScreenCaptureKit)"
     )
 
     # agents
@@ -315,6 +398,107 @@ def cmd_transcript(a: argparse.Namespace) -> None:
             print(f"[{ts(s['start'])}]{tag} {s['text']}")
 
 
+def _ask(title: str, options: list[str]) -> int:
+    """Number the options on stderr and read the choice from stdin; returns its index."""
+    if not sys.stdin.isatty():
+        raise BmError(f"{title}: stdin is not a terminal, pass the choice as an option")
+    print(title, file=sys.stderr)
+    for i, option in enumerate(options, 1):
+        print(f"  {i}. {option}", file=sys.stderr)
+    while True:
+        print("> ", end="", file=sys.stderr, flush=True)
+        answer = sys.stdin.readline()
+        if not answer:
+            raise BmError("nothing chosen")
+        if answer.strip().isdigit() and 1 <= int(answer) <= len(options):
+            return int(answer) - 1
+
+
+def _check_video_options(a: argparse.Namespace) -> None:
+    if not 1 <= a.fps <= 60:
+        raise BmError(f"--fps must be between 1 and 60, not {a.fps}")
+    if not 0 < a.scale <= 1:
+        raise BmError(f"--scale must be above 0 and at most 1, not {a.scale:g}")
+    if a.video_bitrate and not re.fullmatch(r"\d+(\.\d+)?[kKmM]?", a.video_bitrate):
+        raise BmError(f"--video-bitrate must look like 2M or 800k, not {a.video_bitrate!r}")
+
+
+def _pick_window(windows: list[Any], needle: str | None) -> Any:
+    """The one window whose application or title contains ``needle``, or the user's choice."""
+
+    def label(w: Any) -> str:
+        return f"{w.app} — {w.title}"
+
+    if needle is not None:
+        windows = [w for w in windows if needle.casefold() in f"{w.app} {w.title}".casefold()]
+        if len(windows) > 1:
+            found = "; ".join(label(w) for w in windows[:8])
+            raise BmError(f"--window {needle!r} matches {len(windows)} windows: {found}")
+    if not windows:
+        raise BmError("no window to capture" + (f" matches {needle!r}" if needle else ""))
+    pick = 0 if needle is not None else _ask("Which window?", [label(w) for w in windows])
+    log(f"window: {label(windows[pick])}")
+    return windows[pick]
+
+
+def cmd_live(a: argparse.Namespace) -> None:
+    from datetime import datetime
+
+    from .asr import resolve
+
+    try:
+        from . import live
+    except ImportError as e:
+        hint = '`pip install "better-meeting[live]"`'
+        raise BmError(f"`bm live` needs {e.name}, which is not installed: {hint}") from None
+
+    capture = live.get_capture(a.capture)
+    if a.list_windows:
+        for w in capture.windows():
+            print(f"{w.app}\t{w.title}")
+        return
+
+    asr_name = live.default_backend_name() if a.asr_backend == "auto" else a.asr_backend
+    backend, model = resolve(asr_name, a.asr_model)
+    opts = parse_opts(a.opt)
+    backend.check_options(opts)
+    _check_video_options(a)
+    capture.fps = a.fps
+    name = a.name or datetime.now().strftime("live-%Y%m%d-%H%M%S")
+    work = a.out_root / name
+    if work.exists() and any(work.iterdir()):
+        raise BmError(f"{work} already holds a recording; pick another --name")
+
+    sources = list(live.SOURCES)
+    source = a.source or sources[_ask("What to listen to?", sources)]
+    tracks = live.SOURCES[source]
+    window = _pick_window(capture.windows(), a.window) if "app" in tracks else None
+    if not backend.single_pass and a.lang == "auto":
+        log(
+            f"{backend.name} decodes each utterance in one language; pass --lang if the "
+            "meeting has one, or use --asr-backend parakeet for mixed speech"
+        )
+
+    work.mkdir(parents=True, exist_ok=True)
+    options = live.LiveOptions(
+        lang=None if a.lang == "auto" else a.lang,
+        opts=opts,
+        silence=a.silence,
+        max_len=a.max_utterance,
+        draft=not a.no_draft,
+    )
+    transcript = live.run_session(capture, window, tracks, work, backend, model, options)
+    recording = live.mux(work, tracks, a.out_root / name, capture.picture)
+
+    # The artifacts are built as `bm extract` builds them, around the live transcript.
+    ns = build_parser().parse_args(["extract", str(recording)])
+    vars(ns).update(out=work, lang=a.lang, ocr=a.ocr, asr_opts=opts)
+    vars(ns).update(asr_backend=backend.name, asr_model=model)
+    live.finish(recording, work, transcript, ns)
+    live.shrink(recording, a.video_bitrate, a.scale)
+    log(f"recording: {recording}")
+
+
 def cmd_ocr(a: argparse.Namespace) -> None:
     from .ocr import get_backend
 
@@ -325,7 +509,7 @@ def cmd_ocr(a: argparse.Namespace) -> None:
         if a.at is None:
             raise BmError("a video needs a timecode: --at MM:SS")
         path = _grab_at(a.target, a.at, None, a.out_root, a.width)
-    print(get_backend(a.backend).recognize(str(path), a.lang.split(",")))
+    print(get_backend(a.backend).recognize(str(path), split_list(a.lang)))
 
 
 HANDLERS = {
@@ -333,6 +517,7 @@ HANDLERS = {
     "agents": cmd_agents,
     "frame": cmd_frame,
     "transcript": cmd_transcript,
+    "live": cmd_live,
     "ocr": cmd_ocr,
 }
 
@@ -345,7 +530,7 @@ def normalize_argv(argv: list[str]) -> list[str]:
     i = 0
     while i < len(argv) and argv[i] in ("-q", "--quiet", "-v", "--verbose"):
         i += 1
-    if i < len(argv) and argv[i] not in COMMANDS and not argv[i].startswith("-"):
+    if i < len(argv) and argv[i] not in HANDLERS and not argv[i].startswith("-"):
         return [*argv[:i], "extract", *argv[i:]]
     return argv
 

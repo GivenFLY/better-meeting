@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `bm live` (macOS 15+, `[live]` extra): pick a window and a source (the window's
+  application, the microphone, or both) and read the transcript in the terminal
+  while the meeting runs. Each source is cut at pauses and decoded with the regular
+  ASR providers; Parakeet is the default if it is installed. After Ctrl+C the
+  window's video and one audio stream per source are saved to `runs/<name>.mp4`
+  and the usual `artifacts/` folder is built around the live transcript, with the
+  frames and OCR of the recording. With two sources every line carries `[app]` or
+  `[mic]`, in the terminal and in the artifacts. Quiet audio is amplified before
+  decoding, and microphone speech that only repeats the application through the
+  speakers is left out of the transcript. A whole screen can be picked instead
+  of a window, and a window may be resized while it is recorded. `--fps`,
+  `--video-bitrate` and `--scale` set the frame rate and the size of the video.
+
 ## [0.4.3] - 2026-11-13
 
 ### Fixed
