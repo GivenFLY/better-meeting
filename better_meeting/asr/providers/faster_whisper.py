@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ...utils import BmError
+from better_meeting.utils import BmError
+
 from ..base import AsrBackend, RawSegment
 from .mlx_whisper import WHISPER_MODEL
 
