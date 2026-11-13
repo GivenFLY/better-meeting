@@ -109,7 +109,16 @@ def test_merge_keeps_a_line_that_lost_to_shorter_lines():
     # The cursor passes 0-2 s and 2.3-3 s of the sentence, but no line covers them.
     uk = [seg(2, 2.3, "Мм.", "uk", -0.8), seg(3, 3.3, "Ага.", "uk", -0.8)]
     en = [seg(0, 4, "sentence", "en", -0.9)]
-    assert [s["text"] for s in merge_passes([uk, en])] == ["Мм.", "Ага.", "sentence"]
+    assert [s["text"] for s in merge_passes([uk, en])] == ["sentence", "Мм.", "Ага."]
+
+
+def test_merge_returns_segments_in_start_order():
+    # The sentence is taken last, after both short lines, but it starts first.
+    uk = [seg(2, 2.3, "Мм.", "uk", -0.8), seg(3, 3.3, "Ага.", "uk", -0.8)]
+    en = [seg(0, 4, "sentence", "en", -0.9), seg(4, 8, "next", "en", -0.9)]
+    starts = [s["start"] for s in merge_passes([uk, en])]
+    assert starts == sorted(starts)
+    assert starts == [0, 2, 3, 4]
 
 
 # --- language heuristic ------------------------------------------------------

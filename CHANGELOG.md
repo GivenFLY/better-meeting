@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `--lang auto` now returns the merged transcript in order of start time. A line
+  that another pass's shorter lines interrupted used to come after them, so
+  `transcript.md` had lines out of order and `timeline.md` measured some
+  `[silence Ns]` markers between the wrong lines.
+
 ## [0.4.2] - 2026-11-12
 
 ### Fixed
