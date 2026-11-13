@@ -26,8 +26,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from ..audio import extract_audio
-from ..utils import load, log, save
+from better_meeting.audio import extract_audio
+from better_meeting.utils import load, log, save
+
 from .base import AsrBackend, RawSegment, Segment
 from .registry import get_backend
 

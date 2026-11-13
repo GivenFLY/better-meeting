@@ -70,13 +70,16 @@ target-version = "py312"
 extend-exclude = ["*.md"]  # code snippets in docs are illustrative, not formatted
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "TID252"]
 ignore = [
     "RUF001",  # ambiguous unicode: Cyrillic strings are intentional
     "RUF002",
     "RUF003",
     "SIM905",  # split() word lists read better than long list literals
 ]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"  # `.sibling` only; anything above is absolute
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

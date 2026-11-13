@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
-from ..utils import BmError
+from better_meeting.utils import BmError
 
 #: The model of the Whisper providers when ``--asr-model`` is not given.
 WHISPER_MODEL = "large-v3-turbo"

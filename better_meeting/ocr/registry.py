@@ -5,7 +5,8 @@ from __future__ import annotations
 import platform
 from collections.abc import Callable
 
-from ..registry import Registry
+from better_meeting.registry import Registry
+
 from .base import OcrBackend
 
 _BACKENDS: Registry[OcrBackend] = Registry(
