@@ -187,6 +187,8 @@ def merge_passes(passes: Iterable[list[RawSegment]]) -> list[RawSegment]:
     1 s past it then competes too, also when most of it repeats segments already
     taken. A shorter tail is taken to be the same sentence with a later end time
     and is dropped.
+
+    The result is sorted by start time.
     """
     kept = [
         sorted((s for s in p if not is_hallucination(s)), key=lambda s: s["start"]) for p in passes
@@ -214,7 +216,9 @@ def merge_passes(passes: Iterable[list[RawSegment]]) -> list[RawSegment]:
             continue
         out.append(best)
         cursor = best["end"]
-    return out
+    # Segments are taken in order of end time. A crossing segment taken late can
+    # start before the ones taken ahead of it, and readers expect start order.
+    return sorted(out, key=lambda s: (s["start"], s["end"]))
 
 
 def transcribe_range(
