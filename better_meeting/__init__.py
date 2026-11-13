@@ -12,6 +12,7 @@ Modules, in pipeline order:
   bundle     5. assemble artifacts/ (with render: markdown, shots: screenshots)
   pipeline   stage glue with per-stage caching in the video's working folder
   cli        argument parsing and ``main()``
+  registry   named providers, imported on first use (shared by asr and ocr)
   utils      timecodes, logging, subprocess, JSON helpers
 """
 
