@@ -13,6 +13,7 @@ uv tool install better-meeting   # global `bm` command
 # in a clone: uv sync && uv run bm --help
 # macOS: mlx-whisper + Vision OCR out of the box; add the [parakeet] extra for the optional Parakeet engine
 # Linux/Windows: install the [faster] extra + tesseract-ocr, run with --ocr tesseract
+# macOS 15+: add the [live] extra for `bm live`
 ```
 
 ## Extract (the main command)
@@ -73,6 +74,24 @@ bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
 - If the video already went through `extract` with the same model/backend/`-O` options, the range is sliced from the pipeline's cache — no ASR run. Different options or `--force` give a genuinely fresh decode.
 - `--json` gives raw segments; default is `[HH:MM:SS] [lang] text` lines.
 
+## Live sessions
+
+`bm live` (macOS 15+, `[live]` extra) captures a window and/or the microphone and prints the transcript while the meeting runs. It needs a person at the keyboard for the permissions and for Ctrl+C; as an agent you mostly read its results.
+
+```bash
+bm live --list-windows                                   # "application<TAB>title" lines on stdout
+bm live --source app+mic --window zoom --name standup    # no questions asked
+```
+
+- `--list-windows` starts with one `Entire screen<TAB>display N (W×H)` line per display: `--window "display 1"` records the whole screen and all system audio instead of one window.
+- The video is as large as the window ever was during the session; a window that was smaller for a while sits in the top left corner on black.
+- Video options: `--fps N` (default 10), `--video-bitrate 2M` and `--scale 0.5` (both re-encode the saved video after the artifacts are built: the artifacts keep the captured quality, later point queries on the recording see the smaller picture).
+- `--source app|app+mic|mic`: the window's application, the microphone, or both. Omitted options are asked on the terminal; without a terminal they are an error.
+- Final lines go to stdout as `[MM:SS] [track] [lang] text`; the draft line and logs go to stderr. `[track]` appears only with two sources: `[app]` is the captured application (the other participants), `[mic]` is the microphone (the user).
+- After Ctrl+C: `runs/<name>.mp4` is the recording (window video, one audio stream per source; `.m4a` with `--source mic`), and `runs/<name>/artifacts/` is the normal deliverable. `timeline.md` and `transcript.md` keep the `[app]`/`[mic]` tags.
+- The transcript in the artifacts is the live one, cut at pauses. For a second opinion run a point query on the recording, or `bm extract runs/<name>.mp4 --force` for a full offline pass (it mixes the sources, so the track tags are gone).
+- With speakers instead of headphones the microphone also hears the application. The live transcript drops microphone speech that is only that echo (a level comparison, not echo cancellation): a `[mic]` line spoken over the application can still contain the application's words, and the `mic` audio stream of the recording keeps the echo.
+
 ## Pitfalls
 
 - **Low-resolution recording (≤480p)**: OCR is hopeless — run with `--ocr none`. Screenshots are still selected (evenly across screen changes); read them visually instead.
@@ -83,7 +102,7 @@ bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
 
 ## Working on the codebase
 
-- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue + per-stage cache metadata) → one module per stage: `audio`, `asr/`, `frames`, `ocr/`, `bundle` (with `render` and `shots`); `utils.py` helpers.
+- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue + per-stage cache metadata) → one module per stage: `audio`, `asr/`, `frames`, `ocr/`, `bundle` (with `render` and `shots`); `utils.py` helpers. `live/` is `bm live`: `capture/` (providers, same layout as `asr/`), `segmenter` (cuts audio at pauses), `session` (the live loop), `recording` (muxes the recording and hands it to the pipeline).
 - `asr/` and `ocr/` share one layout: `base.py` defines the interface (`AsrBackend` / `OcrBackend`), `registry.py` maps names to lazily imported implementations, `core.py` holds the provider-agnostic logic (multi-language merge, caching, OCR diffing), and `providers/` holds only the interchangeable implementations (`asr/providers/mlx_whisper.py`, `ocr/providers/vision.py`, ...). A new provider — local model or hosted API — is one file in `providers/` plus a registry entry; see CONTRIBUTING.md "Adding a provider". Hosted providers read API keys from environment variables only.
 - Hard rules: no LLM calls inside the tool (extraction only); one output folder per video; point commands keep data on stdout / logs on stderr; every expensive stage caches, invalidates on parameter change, and respects `--force`.
 - Style: English everywhere (code, docstrings, log messages, artifact labels); ruff for lint and formatting. User-facing failures raise `BmError` (printed as `[bm] error: ...`), never `sys.exit` deep in the code.

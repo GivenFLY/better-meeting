@@ -11,6 +11,7 @@ Modules, in pipeline order:
   ocr        4. pluggable OCR providers -> text + diff of new on-screen lines
   bundle     5. assemble artifacts/ (with render: markdown, shots: screenshots)
   pipeline   stage glue with per-stage caching in the video's working folder
+  live       ``bm live``: capture providers, pause segmenter, live session
   cli        argument parsing and ``main()``
   utils      timecodes, logging, subprocess, JSON helpers
 """
