@@ -19,10 +19,9 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
+from better_meeting.live.capture.base import AudioHandler, Capture, Window
 from better_meeting.live.segmenter import RATE
 from better_meeting.utils import BmError, log
-
-from ..base import AudioHandler, Capture, Window
 
 try:
     import CoreMedia as CM  # type: ignore[import-not-found]

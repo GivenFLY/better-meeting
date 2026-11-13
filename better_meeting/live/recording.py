@@ -12,9 +12,9 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from ..asr import pipeline_meta
-from ..pipeline import build_artifacts, run_pipeline
-from ..utils import FFMPEG, log, need, probe_duration, run, save, split_list
+from better_meeting.asr import pipeline_meta
+from better_meeting.pipeline import build_artifacts, run_pipeline
+from better_meeting.utils import FFMPEG, log, need, probe_duration, run, save, split_list
 
 #: H.264 codes a frame in blocks of this many pixels and crops the last ones.
 BLOCK = 16

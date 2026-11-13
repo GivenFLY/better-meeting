@@ -23,9 +23,10 @@ from typing import Any, TextIO
 
 import numpy as np
 
-from ..asr import AsrBackend
-from ..asr.core import is_hallucination, public
-from ..utils import log, ts
+from better_meeting.asr import AsrBackend
+from better_meeting.asr.core import is_hallucination, public
+from better_meeting.utils import log, ts
+
 from .capture import TRACKS, Capture, Window
 from .echo import EchoFilter
 from .segmenter import RATE, Segmenter, Utterance
