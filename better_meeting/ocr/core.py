@@ -6,7 +6,8 @@ import difflib
 import re
 from typing import Any
 
-from ..utils import log
+from better_meeting.utils import log
+
 from .registry import get_backend
 
 
