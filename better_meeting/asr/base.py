@@ -11,6 +11,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, TypedDict
 
+from ..utils import BmError
+
+#: The model of the Whisper providers when ``--asr-model`` is not given.
+WHISPER_MODEL = "large-v3-turbo"
+
 
 class Segment(TypedDict):
     """One transcript segment as stored in ``transcript.json`` and printed to users."""
@@ -53,8 +58,6 @@ class AsrBackend(ABC):
     def check_options(self, opts: dict[str, Any]) -> None:
         """Reject ``-O`` options early, before any audio is extracted."""
         if opts and not self.accepts_options:
-            from ..utils import BmError
-
             raise BmError(f"-O options are not supported by the {self.name!r} ASR backend")
 
     @abstractmethod

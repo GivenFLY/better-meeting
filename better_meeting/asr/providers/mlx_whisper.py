@@ -7,9 +7,7 @@ from typing import Any
 
 from better_meeting.utils import BmError
 
-from ..base import AsrBackend, RawSegment
-
-WHISPER_MODEL = "large-v3-turbo"
+from ..base import WHISPER_MODEL, AsrBackend, RawSegment
 
 
 class MlxWhisperBackend(AsrBackend):

@@ -26,6 +26,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from ..audio import extract_audio
 from ..utils import load, log, save
 from .base import AsrBackend, RawSegment, Segment
 from .registry import get_backend
@@ -78,7 +79,7 @@ def _cached_pass(
 ) -> list[RawSegment]:
     cache = pass_path(work, backend, lang)
     label = backend.name if backend.single_pass else lang
-    cached = load(cache) if cache.exists() else None
+    cached = load(cache) if cache.exists() else {}
     if _matches(cached, backend, model, opts):
         segs: list[RawSegment] = cached["segments"]
         log(f"pass [{label}]: cached, {len(segs)} segments")
@@ -143,9 +144,8 @@ def _uncovered(s: RawSegment, taken: list[RawSegment]) -> float:
         spans.append((max(t["start"], s["start"]), min(t["end"], s["end"])))
     covered, reach = 0.0, s["start"]
     for a, b in sorted(spans):
-        a = max(a, reach)
-        if b > a:
-            covered += b - a
+        if b > max(a, reach):
+            covered += b - max(a, reach)
             reach = b
     return s["end"] - s["start"] - covered
 
@@ -248,9 +248,8 @@ def transcribe_range(
         "backend": backend.name,
         "opts": opts,
     }
-    digest = hashlib.sha1(json.dumps(key, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[
-        :10
-    ]
+    canonical = json.dumps(key, sort_keys=True, ensure_ascii=False)
+    digest = hashlib.sha1(canonical.encode()).hexdigest()[:10]
     cdir = work / "transcripts_at"
     span = f"{int(start):05d}-{'end' if end is None else f'{int(end):05d}'}"
     cache = cdir / f"{span}_{lang or 'auto'}_{digest}.json"
@@ -264,8 +263,6 @@ def transcribe_range(
         if reused is not None:
             log("served from the full-pipeline cache (extract)")
             return reused
-
-    from ..audio import extract_audio
 
     cdir.mkdir(parents=True, exist_ok=True)
     clip = cdir / f"{digest}.wav"
@@ -317,11 +314,6 @@ def _slice_pipeline_cache(
     if not (f_transcript.exists() and f_meta.exists()):
         return None
     meta = load(f_meta)
-    if (
-        meta.get("lang") == "auto"
-        and meta.get("model") == model
-        and meta.get("backend") == backend.name
-        and meta.get("opts", {}) == opts
-    ):
+    if _matches(meta, backend, model, opts) and meta.get("lang") == "auto":
         return [public(s) for s in load(f_transcript) if in_range(s)]
     return None
