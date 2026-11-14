@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ...utils import need, run
-from ..base import OcrBackend
+from better_meeting.ocr.base import OcrBackend
+from better_meeting.utils import need, run
 
 # BCP 47 primary subtag -> tesseract traineddata name, for the common cases.
 _TESS_LANG = {

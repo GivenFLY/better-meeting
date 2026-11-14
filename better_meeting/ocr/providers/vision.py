@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ...utils import BmError
-from ..base import OcrBackend
+from better_meeting.ocr.base import OcrBackend
+from better_meeting.utils import BmError
 
 
 class VisionOcrBackend(OcrBackend):

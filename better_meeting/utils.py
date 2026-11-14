@@ -12,6 +12,9 @@ from typing import Any
 
 logger = logging.getLogger("better_meeting")
 
+#: The start of every ffmpeg command: quiet, and existing output is overwritten.
+FFMPEG = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+
 
 class BmError(Exception):
     """A user-facing failure: printed as ``[bm] error: ...`` and exit code 1."""
@@ -32,19 +35,20 @@ def log(msg: str) -> None:
     logger.info(msg)
 
 
+def _hms(seconds: float) -> tuple[int, int, int]:
+    minutes, sec = divmod(round(seconds), 60)
+    return (*divmod(minutes, 60), sec)
+
+
 def ts(seconds: float) -> str:
     """Seconds -> ``MM:SS``, or ``HH:MM:SS`` from one hour on."""
-    s = round(seconds)
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
+    h, m, sec = _hms(seconds)
     return f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
 
 
 def ts_file(seconds: float) -> str:
     """Seconds -> ``HH-MM-SS``, safe for file names."""
-    s = round(seconds)
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
+    h, m, sec = _hms(seconds)
     return f"{h:02d}-{m:02d}-{sec:02d}"
 
 
@@ -62,9 +66,14 @@ def parse_ts(s: str) -> float:
     return t
 
 
+def split_list(value: str) -> list[str]:
+    """``'uk, ru,en'`` -> ``['uk', 'ru', 'en']``: the items of a comma-separated option."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
     """Run a command, raise :class:`BmError` with the tail of stderr on failure."""
-    res = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    res = subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
     if res.returncode != 0:
         tail = res.stderr.strip()[-500:] or "no output"
         raise BmError(f"`{cmd[0]}` failed (exit {res.returncode}): {tail}")
@@ -87,18 +96,8 @@ def save(path: Path, data: Any) -> None:
 def probe_duration(video: Path) -> float:
     """Container duration in seconds, 0.0 if ffprobe cannot tell."""
     need("ffprobe")
-    res = run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(video),
-        ]
-    )
+    show = ["-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1"]
+    res = run(["ffprobe", "-v", "error", *show, str(video)])
     try:
         return float(res.stdout.strip())
     except ValueError:

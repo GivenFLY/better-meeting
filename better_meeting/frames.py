@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .utils import log, need, run
+from .utils import FFMPEG, log, need, run
 
 GRID = 16  # thumbnails are compared as GRID x GRID grayscale cells
 SPIKE_DELTA = 60  # one cell changing this much keeps the frame on its own
@@ -29,22 +29,8 @@ def sample_thumbs(video: Path, out_dir: Path, interval: float) -> list[dict[str,
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
     log(f"sampling a thumbnail every {interval:g}s")
-    run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(video),
-            "-vf",
-            f"fps=1/{interval}:round=up:start_time=0,scale=320:-2",
-            "-q:v",
-            "6",
-            str(out_dir / "%06d.jpg"),
-        ]
-    )
+    every = f"fps=1/{interval}:round=up:start_time=0,scale=320:-2"
+    run([*FFMPEG, "-i", str(video), "-vf", every, "-q:v", "6", str(out_dir / "%06d.jpg")])
     files = sorted(out_dir.glob("*.jpg"))
     return [{"t": i * interval, "path": str(p)} for i, p in enumerate(files)]
 
@@ -99,27 +85,9 @@ def grab_frame(video: Path, t: float, path: Path, width: int) -> None:
     per second is finer than the frame interval.
     """
     need("ffmpeg")
-    run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-ss",
-            f"{t:.3f}",
-            "-noaccurate_seek",
-            "-i",
-            str(video),
-            "-frames:v",
-            "1",
-            "-vf",
-            f"fps=100:round=up,select='gte(t,0)*eq(selected_n,0)',scale={width}:-2",
-            "-q:v",
-            "2",
-            str(path),
-        ]
-    )
+    seek = ["-ss", f"{t:.3f}", "-noaccurate_seek", "-i", str(video)]
+    current = f"fps=100:round=up,select='gte(t,0)*eq(selected_n,0)',scale={width}:-2"
+    run([*FFMPEG, *seek, "-frames:v", "1", "-vf", current, "-q:v", "2", str(path)])
 
 
 def extract_full_frames(
