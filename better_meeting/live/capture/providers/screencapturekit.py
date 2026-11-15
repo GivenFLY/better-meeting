@@ -19,6 +19,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
+from better_meeting.live.capture.audio import Resampler
 from better_meeting.live.capture.base import AudioHandler, Capture, Window
 from better_meeting.live.segmenter import RATE
 from better_meeting.utils import BmError, log
@@ -75,37 +76,6 @@ class _Format(NamedTuple):
     mChannelsPerFrame: int
     mBitsPerChannel: int
     mReserved: int
-
-
-class _Resampler:
-    """Brings one track's blocks to :data:`RATE`, low-pass filtered across block borders.
-
-    The microphone arrives at the device's rate, usually 48 kHz. Taking every third
-    sample without a filter folds everything above 8 kHz back into the speech band.
-    """
-
-    def __init__(self, rate: float) -> None:
-        self._rate = rate
-        factor = rate / RATE
-        self._factor = round(factor) if factor > 1 and abs(factor - round(factor)) < 1e-6 else 0
-        if self._factor:
-            n = np.arange(-8 * self._factor, 8 * self._factor + 1)
-            taps = np.sinc(n * 0.9 / self._factor) * np.hamming(len(n))
-            self._taps = (taps / taps.sum()).astype(np.float32)
-            self._tail = np.zeros(len(taps) - 1, dtype=np.float32)
-            self._seen = 0  # input samples so far: output samples sit at multiples of the factor
-
-    def __call__(self, data: Any) -> Any:
-        if self._rate == RATE or not len(data):
-            return data
-        if not self._factor:  # an unusual rate: plain interpolation
-            n = round(len(data) * RATE / self._rate)
-            return np.interp(np.arange(n) * (self._rate / RATE), np.arange(len(data)), data)
-        joined = np.concatenate([self._tail, data])
-        self._tail = joined[-len(self._tail) :]
-        first = -self._seen % self._factor
-        self._seen += len(data)
-        return np.convolve(joined, self._taps, mode="valid")[first :: self._factor]
 
 
 def _samples(buffer: Any) -> tuple[Any, float]:
@@ -180,7 +150,7 @@ class ScreenCaptureKitCapture(Capture):
         self._stopping = False
         self._failed = False
         self._frame: tuple[int, int] | None = None  # set while a window is recorded
-        self._resamplers: dict[str, _Resampler] = {}
+        self._resamplers: dict[str, Resampler] = {}
 
     def _content(self) -> Any:
         return _wait(
@@ -302,7 +272,7 @@ class ScreenCaptureKitCapture(Capture):
         try:
             data, rate = _samples(buffer)
             if track not in self._resamplers:
-                self._resamplers[track] = _Resampler(rate)
+                self._resamplers[track] = Resampler(rate)
             samples = self._resamplers[track](data).astype("float32")
         except Exception as e:  # an exception must not escape into the Objective-C caller
             self._failed = True

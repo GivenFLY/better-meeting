@@ -50,7 +50,7 @@ uv tool install better-meeting
 uv tool install "better-meeting[faster]"
 ```
 
-Add the `[parakeet]` extra for the optional Parakeet engine (macOS), and the `[live]` extra for `bm live` (macOS 15+). Upgrade with `uv tool upgrade better-meeting`. `pipx install` works the same way.
+Add the `[parakeet]` extra for the optional Parakeet engine (macOS), and the `[live]` extra for `bm live` (macOS 15+, or Windows 10 version 2004 and later). Upgrade with `uv tool upgrade better-meeting`. `pipx install` works the same way.
 
 On first use the ASR models download from Hugging Face: about 1.6 GB for Whisper large-v3-turbo, 2.5 GB for Parakeet TDT v3.
 
@@ -159,10 +159,11 @@ Timecodes accept `SS`, `MM:SS` or `HH:MM:SS`. `bm transcript` results are cached
 
 ## Live meetings
 
-`bm live` transcribes a meeting while it runs (macOS 15+, needs the `[live]` extra):
+`bm live` transcribes a meeting while it runs. It needs the `[live]` extra and macOS 15+, or Windows 10 version 2004 and later:
 
 ```bash
-uv tool install "better-meeting[live,parakeet]"
+uv tool install "better-meeting[live,parakeet]"     # macOS
+uv tool install "better-meeting[live,faster]"       # Windows
 bm live                                      # asks what to listen to and which window
 bm live --source app+mic --window zoom --name standup
 ```
@@ -175,16 +176,18 @@ It asks for a source and a window, then prints each line as soon as the speaker 
 ```
 
 - `--source app` listens to the application that owns the window, `mic` to the microphone, `app+mic` to both. With both, the lines carry `[app]` or `[mic]`: the other participants and you.
-- macOS gives the audio of the whole application, not of one window.
-- The list starts with the screens: `Entire screen` records a whole display and listens to everything the Mac plays (`--window "display 1"`).
+- Both systems give the audio of the whole application, not of one window.
+- The list starts with the screens: `Entire screen` records a whole display and listens to everything the computer plays (`--window "display 1"`).
 - A window is recorded at its own size, and may grow or shrink while it is recorded: the video is as large as the window ever was, with the window in the top left corner.
 - The video is up to 10 frames per second, enough for slides and demos; `--fps 30` makes it smooth. `--video-bitrate 2M` and `--scale 0.5` make the file smaller: the saved video is encoded once more after the artifacts are built, so the screenshots and the OCR keep the captured quality. Later point queries (`bm frame`, `bm ocr -t`) read the smaller file.
 - Ctrl+C ends the session. The window's video and every source as its own audio stream are saved to `runs/<name>.mp4`. Then the frames, OCR and bundle stages run, and `runs/<name>/artifacts/` is the same folder that `bm extract` builds. The live transcript is kept, so no ASR runs again.
 - Parakeet is the default ASR engine if it is installed. It decodes a line in a fraction of a second and keeps both languages when a line mixes two. Whisper works too, but decodes each line in one language: pin it with `--lang`.
-- The terminal that runs `bm` needs the **Screen & System Audio Recording** permission (System Settings > Privacy & Security), and **Microphone** for the `mic` source.
+- On macOS the terminal that runs `bm` needs the **Screen & System Audio Recording** permission (System Settings > Privacy & Security), and **Microphone** for the `mic` source. On Windows the `mic` source needs **Let desktop apps access your microphone** (Settings > Privacy & security > Microphone).
 - Headphones give the cleanest `app+mic` session. With speakers the microphone hears the other participants too; `bm live` compares the levels of the two tracks and drops what the microphone only repeated, but where you talk over them their words can end up in your line.
 
 `bm extract runs/<name>.mp4 --force` transcribes the recording again offline, with every stage's options available.
+
+> **Windows testers wanted.** The Windows capture is written to do everything the macOS one does, but it was written from the documentation of the system APIs and no maintainer has a Windows machine: it has not run a real session yet. If you have one, [the checklist in CONTRIBUTING.md](CONTRIBUTING.md#testing-bm-live-on-windows) takes about ten minutes, and a report of what worked and what did not is a welcome contribution.
 
 ## Talking to the video
 
@@ -200,6 +203,7 @@ Speech recognition and OCR are **pluggable providers** behind small interfaces (
 | ASR | `faster` | local, any OS | Whisper via CTranslate2 (default elsewhere) |
 | ASR | `parakeet` | local, macOS | one multilingual pass, no language hint |
 | Capture | `screencapturekit` | local, macOS 15+ | window video, application audio, microphone for `bm live` |
+| Capture | `windows` | local, Windows 10 2004+ | the same through Windows Graphics Capture and WASAPI; needs testers |
 | OCR | `vision` | local, macOS | Apple Vision framework (default on macOS) |
 | OCR | `tesseract` | local, any OS | tesseract CLI |
 

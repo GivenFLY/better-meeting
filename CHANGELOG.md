@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
   speakers is left out of the transcript. A whole screen can be picked instead
   of a window, and a window may be resized while it is recorded. `--fps`,
   `--video-bitrate` and `--scale` set the frame rate and the size of the video.
+- `bm live` on Windows 10 (version 2004) and later, with the same sources and
+  options as on macOS: the picture of a window or a screen through Windows
+  Graphics Capture, the audio of the window's application through a process
+  loopback, the microphone through WASAPI. It has not run on a real machine yet:
+  see "Testing `bm live` on Windows" in CONTRIBUTING.md.
 
 ## [0.4.3] - 2026-11-13
 

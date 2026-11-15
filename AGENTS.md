@@ -13,7 +13,7 @@ uv tool install better-meeting   # global `bm` command
 # in a clone: uv sync && uv run bm --help
 # macOS: mlx-whisper + Vision OCR out of the box; add the [parakeet] extra for the optional Parakeet engine
 # Linux/Windows: install the [faster] extra + tesseract-ocr, run with --ocr tesseract
-# macOS 15+: add the [live] extra for `bm live`
+# macOS 15+ or Windows 10 2004+: add the [live] extra for `bm live`
 ```
 
 ## Extract (the main command)
@@ -76,7 +76,7 @@ bm transcript meeting.mp4 --from 10:00 --to 12:30 --lang uk \
 
 ## Live sessions
 
-`bm live` (macOS 15+, `[live]` extra) captures a window and/or the microphone and prints the transcript while the meeting runs. It needs a person at the keyboard for the permissions and for Ctrl+C; as an agent you mostly read its results.
+`bm live` (`[live]` extra; macOS 15+, or Windows 10 version 2004+ where it is not tested on real machines yet) captures a window and/or the microphone and prints the transcript while the meeting runs. It needs a person at the keyboard for the permissions and for Ctrl+C; as an agent you mostly read its results.
 
 ```bash
 bm live --list-windows                                   # "application<TAB>title" lines on stdout
@@ -102,7 +102,7 @@ bm live --source app+mic --window zoom --name standup    # no questions asked
 
 ## Working on the codebase
 
-- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue + per-stage cache metadata) → one module per stage: `audio`, `asr/`, `frames`, `ocr/`, `bundle` (with `render` and `shots`); `utils.py` helpers. `live/` is `bm live`: `capture/` (providers, same layout as `asr/`), `segmenter` (cuts audio at pauses), `session` (the live loop), `recording` (muxes the recording and hands it to the pipeline).
+- Layout: `better_meeting/cli.py` (entry + subcommands) → `pipeline.py` (stage glue + per-stage cache metadata) → one module per stage: `audio`, `asr/`, `frames`, `ocr/`, `bundle` (with `render` and `shots`); `utils.py` helpers. `live/` is `bm live`: `capture/` (providers, same layout as `asr/`, plus the `audio` and `video` helpers they share), `segmenter` (cuts audio at pauses), `session` (the live loop), `recording` (muxes the recording and hands it to the pipeline).
 - `asr/` and `ocr/` share one layout: `base.py` defines the interface (`AsrBackend` / `OcrBackend`), `registry.py` maps names to lazily imported implementations (both on the shared `better_meeting/registry.py`), `core.py` holds the provider-agnostic logic (multi-language merge, caching, OCR diffing), and `providers/` holds only the interchangeable implementations (`asr/providers/mlx_whisper.py`, `ocr/providers/vision.py`, ...). A new provider — local model or hosted API — is one file in `providers/` plus a registry entry; see CONTRIBUTING.md "Adding a provider". Hosted providers read API keys from environment variables only.
 - Hard rules: no LLM calls inside the tool (extraction only); one output folder per video; point commands keep data on stdout / logs on stderr; every expensive stage caches, invalidates on parameter change, and respects `--force`.
 - Style: English everywhere (code, docstrings, log messages, artifact labels); ruff for lint and formatting. Relative imports stay inside their own package (`.base`); anything from a parent package is absolute (`from better_meeting.utils import BmError`) — ruff enforces it. User-facing failures raise `BmError` (printed as `[bm] error: ...`), never `sys.exit` deep in the code.

@@ -251,7 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="OCR backend for the artifacts built after the session",
     )
     pl.add_argument(
-        "--capture", default="auto", help="capture provider (default: auto = ScreenCaptureKit)"
+        "--capture",
+        default="auto",
+        help="capture provider (default: auto = screencapturekit on macOS, windows on Windows)",
     )
 
     # agents

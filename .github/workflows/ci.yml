@@ -52,6 +52,21 @@ jobs:
           uv run --no-sync bm --help > /dev/null
           uv run --no-sync bm agents > /dev/null
 
+  live-windows:
+    # No audio device and nobody at the keyboard on a runner: this checks that the
+    # Windows capture loads with its libraries and can list displays and windows.
+    name: bm live on Windows (loads, lists windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: choco install ffmpeg -y --no-progress
+      - run: uv sync --locked --extra live
+      - run: uv run --no-sync pytest tests/test_capture.py
+      - run: uv run --no-sync bm live --list-windows
+
   build:
     runs-on: ubuntu-latest
     steps:

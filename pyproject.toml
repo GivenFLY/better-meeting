@@ -32,10 +32,14 @@ dependencies = [
 faster = ["faster-whisper>=1.0.0"]
 # NVIDIA Parakeet TDT: one multilingual pass (macOS, MLX).
 parakeet = ["parakeet-mlx>=0.5.2 ; sys_platform == 'darwin'"]
-# `bm live`: window, application audio and microphone capture (macOS 15+).
+# `bm live`: window, application audio and microphone capture
+# (macOS 15+; Windows 10 version 2004+, not tested on a real machine yet).
 live = [
     "numpy>=1.26",
     "pyobjc-framework-ScreenCaptureKit>=12.1 ; sys_platform == 'darwin'",
+    "windows-capture>=2.0 ; sys_platform == 'win32'",
+    "proc-tap>=1.1 ; sys_platform == 'win32'",
+    "PyAudioWPatch>=0.2.12.7 ; sys_platform == 'win32'",
 ]
 
 [project.scripts]
