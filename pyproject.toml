@@ -32,6 +32,11 @@ dependencies = [
 faster = ["faster-whisper>=1.0.0"]
 # NVIDIA Parakeet TDT: one multilingual pass (macOS, MLX).
 parakeet = ["parakeet-mlx>=0.5.2 ; sys_platform == 'darwin'"]
+# `bm live`: window, application audio and microphone capture (macOS 15+).
+live = [
+    "numpy>=1.26",
+    "pyobjc-framework-ScreenCaptureKit>=12.1 ; sys_platform == 'darwin'",
+]
 
 [project.scripts]
 bm = "better_meeting.cli:main"
@@ -44,6 +49,7 @@ Changelog = "https://github.com/GivenFLY/better-meeting/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
+    "numpy>=1.26",
     "pytest>=8.3",
     "ruff>=0.8",
 ]
