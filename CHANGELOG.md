@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
 ### Added
 - `bm live` (macOS 15+, `[live]` extra): pick a window and a source (the window's
   application, the microphone, or both) and read the transcript in the terminal
@@ -19,6 +21,10 @@ All notable changes to this project are documented here. The format follows
   speakers is left out of the transcript. A whole screen can be picked instead
   of a window, and a window may be resized while it is recorded. `--fps`,
   `--video-bitrate` and `--scale` set the frame rate and the size of the video.
+
+### Changed
+- Spaces around the items of `--ocr-lang` and `bm ocr --lang` are now ignored, as
+  they already were for `--langs`.
 
 ## [0.4.3] - 2026-11-13
 
@@ -114,7 +120,8 @@ All notable changes to this project are documented here. The format follows
 
 - Initial public release.
 
-[Unreleased]: https://github.com/GivenFLY/better-meeting/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/GivenFLY/better-meeting/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/GivenFLY/better-meeting/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/GivenFLY/better-meeting/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/GivenFLY/better-meeting/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/GivenFLY/better-meeting/compare/v0.4.0...v0.4.1
