@@ -77,6 +77,40 @@ For hosted providers:
   service detects languages itself.
 - Document in the README what data leaves the machine.
 
+## Testing `bm live` on Windows
+
+The Windows capture (`better_meeting/live/capture/providers/windows.py`) is meant to do
+everything the macOS one does. It was written from the documentation of
+`windows-capture`, `proc-tap` and `PyAudioWPatch`; no maintainer has a Windows machine,
+so only its platform-independent parts are covered by tests. **If you have Windows 10
+(version 2004 or later) or Windows 11, running this checklist is the most useful
+contribution right now.** Issues that need it carry the `needs contributors` label.
+
+```powershell
+uv tool install "better-meeting[live,faster]"    # ffmpeg must be on PATH
+bm live --list-windows
+bm live --source mic --name t-mic
+bm live --source app --window "display 1" --name t-screen
+bm live --source app+mic --window <part of a window title> --name t-window
+```
+
+Stop each session with Ctrl+C after about a minute. Things to check:
+
+1. `--list-windows` shows every display and the windows you would expect, with sensible
+   application names, and nothing that is not a window.
+2. `t-mic`: lines appear while you speak; `runs/t-mic.m4a` plays back at the right speed.
+3. `t-screen`: something that plays sound (a video with speech) gets transcribed;
+   `runs/t-screen.mp4` shows the screen, and the sound is in step with the picture.
+4. `t-window`: only that application is heard (play sound in another one too); the lines
+   carry `[app]` and `[mic]`; resizing the window during the session gives a video as
+   large as the window ever was; closing the window ends the session.
+5. A browser or an application from the Microsoft Store as the window: is its sound captured?
+6. Whether Windows draws a border around the captured window, and whether a session
+   that starts while nothing plays stays in step once the sound begins.
+
+Please report the Windows version, the commands, what the terminal printed and what
+did not work, even when everything did.
+
 ## Commit sign-off (DCO)
 
 Every commit must be signed off:

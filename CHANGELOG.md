@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `bm live` on Windows 10 (version 2004) and later, with the same sources and
+  options as on macOS: the picture of a window or a screen through Windows
+  Graphics Capture, the audio of the window's application through a process
+  loopback, the microphone through WASAPI. It has not run on a real machine yet:
+  see "Testing `bm live` on Windows" in CONTRIBUTING.md.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added
