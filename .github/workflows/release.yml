@@ -1,7 +1,8 @@
 name: Release
 
-# Publishes to PyPI when a version tag is pushed. Authentication uses PyPI
-# Trusted Publishing (OIDC), so no API token is stored in the repository.
+# Publishes to PyPI when a version tag is pushed, then creates the GitHub release
+# from the version's CHANGELOG.md entry. Authentication uses PyPI Trusted
+# Publishing (OIDC), so no API token is stored in the repository.
 
 on:
   push:
@@ -47,3 +48,22 @@ jobs:
           name: dist
           path: dist/
       - run: uv publish
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the release
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/release_notes.py "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
